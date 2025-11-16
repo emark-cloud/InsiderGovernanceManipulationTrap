@@ -164,7 +164,7 @@ contract InsiderGovernanceManipulationTrap is ITrap {
     /*                            Internal Safe Decoder                           */
     /* -------------------------------------------------------------------------- */
 
-    /// @dev External helper to allow try/catch without reverting the planner.
+   
     function _safeDecode(bytes calldata blob)
         external
         pure
