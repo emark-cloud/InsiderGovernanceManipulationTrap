@@ -1,118 +1,112 @@
-# Drosera Trap Foundry Template
+# Insider Governance Manipulation Trap 
 
-This repo is for quickly bootstrapping a new Drosera project. It includes instructions for creating your first trap, deploying it to the Drosera network, and updating it on the fly.
+A Drosera-compatible, stateless governance threat‑detection trap designed to identify proposal and voting patterns that resemble insider behavior, burner-wallet attacks, or coordinated whale governance manipulation.
 
-[![view - Documentation](https://img.shields.io/badge/view-Documentation-blue?style=for-the-badge)](https://dev.drosera.io "Project documentation")
-[![Twitter](https://img.shields.io/twitter/follow/DroseraNetwork?style=for-the-badge)](https://x.com/DroseraNetwork)
+---
 
-## Configure dev environment
+## Purpose
 
-```bash
-curl -L https://foundry.paradigm.xyz | bash
-foundryup
+This trap evaluates **off-chain governance intelligence**—such as proposer behavior, vote timing, and wallet provenance—to detect governance events that statistically match known attack patterns.
 
-# The trap-foundry-template utilizes node modules for dependency management
-# install Bun (optional)
-curl -fsSL https://bun.sh/install | bash
+It is intentionally **stateless**, extremely **planner-safe**, and optimized for low-cost Drosera operation.
 
-# install node modules
-bun install
+---
 
-# install vscode (optional)
-# - add solidity extension JuanBlanco.solidity
+## Data Model: GovSummary
 
-# install drosera-cli
-curl -L https://app.drosera.io/install | bash
-droseraup
+The off-chain agent submits a single encoded struct:
+
+```solidity
+struct GovSummary {
+    uint64 proposerAgeDays;
+    bool fundedFromCEX;
+    uint32 proposalFrequency30d;
+    uint32 avg30d;
+    uint16 voteSpikePercent;
+    uint16 correlationScore;
+}
 ```
 
-open the VScode preferences and Select `Soldity: Change workpace compiler version (Remote)`
+All expensive analysis—wallet age, funding heuristics, clustering, frequency analysis—is done off-chain.
 
-Select version `0.8.12`
+---
 
-## Quick Start
+## Detection Logic
 
-The following drosera commands set the `DROSERA_PRIVATE_KEY` environment variable in the command line but you can also use a `.env` file to store the private key of the account you want to use to deploy the trap.
+The trap returns a severity score based on risk patterns:
 
-### Hello World Trap
+### **Severity 10 (Critical)**
 
-The drosera.toml file is configured to deploy a simple "Hello, World!" trap. Ensure the drosera.toml file is set to the following configuration:
+* Wallet age < 7 days
+* Funded from a CEX
+* > 70% of votes in one block
 
-```toml
-response_contract = "0xdA890040Af0533D98B9F5f8FE3537720ABf83B0C"
-response_function = "helloworld(string)"
+### **Severity 7 (High)**
+
+* correlationScore > 80
+  **OR**
+* proposalFrequency > 2× 30‑day baseline
+
+### **Severity 5 (Medium)**
+
+* Wallet age < 7
+* correlationScore > 60
+* voteSpikePercent > 50
+
+### **Severity 0** — Normal behavior
+
+If severity > 0, the trap emits a payload for responders.
+
+---
+
+## Payload
+
+```solidity
+abi.encode(
+    severity,
+    proposerAgeDays,
+    fundedFromCEX,
+    proposalFrequency30d,
+    avg30d,
+    voteSpikePercent,
+    correlationScore,
+    block.number,
+    block.timestamp
+);
 ```
 
-To deploy the trap, run the following commands:
+---
 
-```bash
-# Compile the Trap
-forge build
+## Planner Safety
 
-# Deploy the Trap
-DROSERA_PRIVATE_KEY=0x.. drosera apply
-```
+* `collect()` returns empty
+* Safe decoding via `try/catch`
+* No external calls
+* No persistent storage writes
 
-After successfully deploying the trap, the CLI will add an `address` field to the `drosera.toml` file.
+---
 
-Congratulations! You have successfully deployed your first trap!
+## Responder
 
-### Response Trap
+The `InsiderGovernanceResponder` receives alert payloads and, depending on severity, can:
 
-You can then update the trap by changing its logic and recompling it or changing the path field in the `drosera.toml` file to point to the Response Trap.
+* Emit structured monitoring events
+* Call a guardian/pause module
+* Perform higher-level protective logic
 
-The Response Trap is designed to trigger a response at a specific block number. To test the Response Trap, pick a future block number and update the Response Trap.
-Specify a response contract address and function signature in the drosera.toml file to the following:
+---
 
-```toml
-response_contract = "0x183D78491555cb69B68d2354F7373cc2632508C7"
-response_function = "responseCallback(uint256)"
-```
+## Off‑Chain Agent Requirements
 
-Finally, deploy the Response Trap by running the following commands:
+* Monitor proposals & vote events
+* Compute wallet age + funding source
+* Analyze proposal frequency
+* Detect vote-spike distribution
+* Correlate proposer/voters
+* Encode & submit a `GovSummary`
 
-```bash
-# Compile the Trap
-forge build
+---
 
-# Deploy the Trap
-DROSERA_PRIVATE_KEY=0x.. drosera apply
-```
+## License
 
-> Note: The `DROSERA_PRIVATE_KEY` environment variable can be used to deploy traps. You can also set it in the drosera.toml file as `private_key = "0x.."`.
-
-
-### Transfer Event Trap
-The TransferEventTrap is an example of how a Trap can parse event logs from a block and respond to a specific ERC-20 token transfer events.
-
-To deploy the Transfer Event Trap, uncomment the `transfer_event_trap` section in the `drosera.toml` file. Add the token address to the `tokenAddress` constant in the `TransferEventTrap.sol` file and then deploy the trap.
-
-### Alert Trap
-The AlertTrap is an example of how a Trap can parse event logs from a block and alert on a specific ERC-20 token transfer events.
-
-To deploy the Alert Trap, run the following commands:
-
-```bash
-forge build
-
-DROSERA_PRIVATE_KEY=0x.. drosera -c drosera.alerts.toml.j2 apply
-```
-
-> Note: The `.j2` file extension is used to indicate that the file is a jinja template and environment variables can be used in the file by wrapping them in `{{ env.VARIABLE_NAME }}`.
-
-Once configured properly, you can test the alert integration by running the following command;
-
-```bash
-DROSERA_PRIVATE_KEY=0x.. drosera -c drosera.alerts.toml.j2 send-test-alert --trap-name alert_trap
-```
-
-This will run the tests and you should see the alert being triggered in the console.
-
-
-## Testing
-
-Example tests are included in the `tests` directory. They simulate how Drosera Operators execute traps and determine if a response should be triggered. To run the tests, execute the following command:
-
-```bash
-forge test
-```
+MIT
