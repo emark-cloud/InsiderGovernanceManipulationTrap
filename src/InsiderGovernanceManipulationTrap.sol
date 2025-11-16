@@ -42,13 +42,13 @@ contract InsiderGovernanceManipulationTrap is ITrap {
     
     // “High risk” condition thresholds
     uint64 public constant MAX_NEW_WALLET_DAYS = 7;
-    uint16 public constant HIGH_SPIKE_PERCENT = 70; // >70% of votes in a single block
+    uint16 public constant HIGH_SPIKE_PERCENT = 70; 
     uint16 public constant MEDIUM_SPIKE_PERCENT = 50;
 
     uint16 public constant HIGH_CORRELATION = 80;
     uint16 public constant MEDIUM_CORRELATION = 60;
 
-    uint32 public constant FREQUENCY_MULTIPLIER = 2; // proposalFrequency30d > 2 * avg30d
+    uint32 public constant FREQUENCY_MULTIPLIER = 2; 
 
     /* -------------------------------------------------------------------------- */
     /*                                  COLLECT                                   */
