@@ -12,7 +12,7 @@ contract InsiderGovernanceResponder {
 
     address public owner;
     IGuardian public guardian;
-    uint8 public severityThreshold = 7; // Only auto-respond to sev >= 7
+    uint8 public severityThreshold = 7; 
 
     modifier onlyOwner() {
         require(msg.sender == owner, "NOT_OWNER");
