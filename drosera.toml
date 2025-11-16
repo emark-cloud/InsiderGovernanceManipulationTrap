@@ -1,0 +1,17 @@
+ethereum_rpc = "https://rpc.mevblocker.io"
+
+[network]
+drosera_address = "0x01C344b8406c3237a6b9dbd06ef2832142866d87"
+
+[traps.insider_governance_manipulation]
+path = "out/InsiderGovernanceManipulationTrap.sol/InsiderGovernanceManipulationTrap.json"
+contract_name = "InsiderGovernanceManipulationTrap"
+response_contract = "0x1Ebe2e1989964CDBBeBaeCD3E7eD69b1A77Ec8d7"
+response_function = "handle(bytes)"
+cooldown_period_blocks = 1
+min_number_of_operators = 1
+max_number_of_operators = 5
+block_sample_size = 1
+private_trap = true
+whitelist = ["0x8944e2090Ccbce53dEc8F503126ca04A43D8CDE2"]
+
