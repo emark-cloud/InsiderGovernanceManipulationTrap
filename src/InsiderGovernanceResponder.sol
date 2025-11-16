@@ -80,9 +80,9 @@ contract InsiderGovernanceResponder {
             (uint8, uint64, bool, uint32, uint32, uint16, uint16, uint256, uint64)
         );
 
-        // Basic policy: only escalate above a given severity
+        
         if (severity < severityThreshold) {
-            // Still log it, but do not call guardian
+            
             emit GovernanceIncidentHandled(
                 severity,
                 proposerAgeDays,
@@ -114,7 +114,7 @@ contract InsiderGovernanceResponder {
             )
         );
 
-        // Call guardian to pause / take protective action (implementation-specific)
+        
         if (address(guardian) != address(0)) {
             guardian.pauseProtocol(reasonHash);
         }
