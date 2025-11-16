@@ -124,7 +124,7 @@ contract InsiderGovernanceManipulationTrap is ITrap {
             severity = 5;
             reason = bytes("Minor governance anomaly detected");
         } else {
-            // No notable issue
+            
             return (false, "");
         }
 
