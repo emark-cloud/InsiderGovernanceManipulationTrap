@@ -69,18 +69,18 @@ contract InsiderGovernanceManipulationTrap is ITrap {
         override
         returns (bool, bytes memory)
     {
-        // Guard: need at least one blob
+        
         if (data.length == 0 || data[0].length == 0) {
             return (false, "");
         }
 
         GovSummary memory g;
 
-        // Planner-safe decode: use external helper and try/catch
+        
         try this._safeDecode(data[0]) returns (GovSummary memory gs) {
             g = gs;
         } catch {
-            // If decode fails, planner should not revert; just treat as no signal
+            
             return (false, "");
         }
 
