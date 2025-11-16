@@ -63,8 +63,7 @@ contract InsiderGovernanceResponder {
     /*                                  Response                                  */
     /* -------------------------------------------------------------------------- */
 
-    /// @notice Called by Drosera (or your own coordinator) when the trap returns shouldRespond = true
-    /// @param payload Encoded as in InsiderGovernanceManipulationTrap.shouldRespond()
+   
     function handle(bytes calldata payload) external {
         (
             uint8 severity,
@@ -99,7 +98,7 @@ contract InsiderGovernanceResponder {
             return;
         }
 
-        // Compose a reason hash with the core risk factors
+        
         bytes32 reasonHash = keccak256(
             abi.encodePacked(
                 "INSIDER_GOVERNANCE_RISK",
