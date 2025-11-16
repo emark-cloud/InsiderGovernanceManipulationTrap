@@ -8,7 +8,7 @@ contract InsiderGovernanceManipulationTrap is ITrap {
     /*                                   Types                                    */
     /* -------------------------------------------------------------------------- */
 
-    /// @notice Summary metrics computed off-chain for a single governance proposal / vote event
+    /// Summary metrics computed off-chain for a single governance proposal / vote event
     struct GovSummary {
         uint64 proposerAgeDays;        // Age of proposer wallet in days
         bool fundedFromCEX;            // Heuristic: true if last major funding source is CEX
@@ -39,9 +39,7 @@ contract InsiderGovernanceManipulationTrap is ITrap {
     /*                                Trap Config                                 */
     /* -------------------------------------------------------------------------- */
 
-    /// @notice We keep the trap mostly stateless; a few tunable thresholds are allowed.
-    /// These can be made owner-configurable if you want, but left as constants for simplicity.
-
+    
     // “High risk” condition thresholds
     uint64 public constant MAX_NEW_WALLET_DAYS = 7;
     uint16 public constant HIGH_SPIKE_PERCENT = 70; // >70% of votes in a single block
@@ -56,8 +54,7 @@ contract InsiderGovernanceManipulationTrap is ITrap {
     /*                                  COLLECT                                   */
     /* -------------------------------------------------------------------------- */
 
-    /// @notice This trap is intentionally stateless. All intelligence is computed off-chain.
-    /// @dev Drosera planner can still call this, but it returns an empty blob.
+   
     function collect() external view override returns (bytes memory) {
         return "";
     }
@@ -66,8 +63,7 @@ contract InsiderGovernanceManipulationTrap is ITrap {
     /*                               SHOULD RESPOND                               */
     /* -------------------------------------------------------------------------- */
 
-    /// @notice Decide if this looks like an insider governance manipulation pattern.
-    /// @dev Expects data[0] to be abi.encode(GovSummary)
+  
     function shouldRespond(bytes[] calldata data)
         external
         override
