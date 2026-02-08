@@ -1,57 +1,54 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-interface IGuardian {
-    function pauseProtocol(bytes32 reasonHash) external;
-}
-
+/**
+ * @notice
+ * Handles responses to insider governance manipulation alerts.
+ * All side effects and logging live here (NOT in the trap).
+ */
 contract InsiderGovernanceResponder {
-    /* -------------------------------------------------------------------------- */
-    /*                                   Config                                   */
-    /* -------------------------------------------------------------------------- */
-
     address public owner;
-    IGuardian public guardian;
-    uint8 public severityThreshold = 7; 
+    address public caller; // Drosera relay / executor
+
+    uint8 public severityThreshold = 7;
+
+    event GovernanceIncidentHandled(
+        uint8  severity,
+        uint64 proposerAgeDays,
+        bool   fundedFromCEX,
+        uint32 proposalFrequency30d,
+        uint32 avg30d,
+        uint16 voteSpikePercent,
+        uint16 correlationScore,
+        bytes32 reasonHash
+    );
 
     modifier onlyOwner() {
         require(msg.sender == owner, "NOT_OWNER");
         _;
     }
 
-    constructor(address _guardian) {
+    modifier onlyCaller() {
+        require(msg.sender == caller, "UNAUTHORIZED");
+        _;
+    }
+
+    constructor() {
         owner = msg.sender;
-        guardian = IGuardian(_guardian);
     }
 
     /* -------------------------------------------------------------------------- */
-    /*                                   Events                                   */
+    /*                              ADMIN CONTROLS                                */
     /* -------------------------------------------------------------------------- */
 
-    event GovernanceIncidentHandled(
-        uint8 severity,
-        uint64 proposerAgeDays,
-        bool fundedFromCEX,
-        uint32 proposalFrequency30d,
-        uint32 avg30d,
-        uint16 voteSpikePercent,
-        uint16 correlationScore,
-        uint256 blockNumber,
-        uint64 timestamp,
-        bytes32 reasonHash
-    );
-
-    /* -------------------------------------------------------------------------- */
-    /*                             Admin configuration                            */
-    /* -------------------------------------------------------------------------- */
-
-    function setSeverityThreshold(uint8 _sev) external onlyOwner {
-        require(_sev <= 10, "INVALID_SEVERITY");
-        severityThreshold = _sev;
+    function setCaller(address c) external onlyOwner {
+        require(c != address(0), "ZERO_CALLER");
+        caller = c;
     }
 
-    function setGuardian(address _guardian) external onlyOwner {
-        guardian = IGuardian(_guardian);
+    function setSeverityThreshold(uint8 s) external onlyOwner {
+        require(s > 0 && s <= 10, "INVALID_SEVERITY");
+        severityThreshold = s;
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
@@ -60,11 +57,13 @@ contract InsiderGovernanceResponder {
     }
 
     /* -------------------------------------------------------------------------- */
-    /*                                  Response                                  */
+    /*                                   HANDLE                                   */
     /* -------------------------------------------------------------------------- */
 
-   
-    function handle(bytes calldata payload) external {
+    function handle(bytes calldata payload)
+        external
+        onlyCaller
+    {
         (
             uint8 severity,
             uint64 proposerAgeDays,
@@ -72,33 +71,16 @@ contract InsiderGovernanceResponder {
             uint32 proposalFrequency30d,
             uint32 avg30d,
             uint16 voteSpikePercent,
-            uint16 correlationScore,
-            uint256 blk,
-            uint64 ts
+            uint16 correlationScore
         ) = abi.decode(
             payload,
-            (uint8, uint64, bool, uint32, uint32, uint16, uint16, uint256, uint64)
+            (uint8, uint64, bool, uint32, uint32, uint16, uint16)
         );
 
-        
         if (severity < severityThreshold) {
-            
-            emit GovernanceIncidentHandled(
-                severity,
-                proposerAgeDays,
-                fundedFromCEX,
-                proposalFrequency30d,
-                avg30d,
-                voteSpikePercent,
-                correlationScore,
-                blk,
-                ts,
-                bytes32(0)
-            );
             return;
         }
 
-        
         bytes32 reasonHash = keccak256(
             abi.encodePacked(
                 "INSIDER_GOVERNANCE_RISK",
@@ -106,18 +88,10 @@ contract InsiderGovernanceResponder {
                 proposerAgeDays,
                 fundedFromCEX,
                 proposalFrequency30d,
-                avg30d,
                 voteSpikePercent,
-                correlationScore,
-                blk,
-                ts
+                correlationScore
             )
         );
-
-        
-        if (address(guardian) != address(0)) {
-            guardian.pauseProtocol(reasonHash);
-        }
 
         emit GovernanceIncidentHandled(
             severity,
@@ -127,10 +101,12 @@ contract InsiderGovernanceResponder {
             avg30d,
             voteSpikePercent,
             correlationScore,
-            blk,
-            ts,
             reasonHash
         );
+
+        // Optional extensions:
+        // pauseGovernance();
+        // enforceDelay();
+        // revokeAdmin();
     }
 }
-
