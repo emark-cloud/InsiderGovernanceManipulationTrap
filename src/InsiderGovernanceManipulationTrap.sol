@@ -5,8 +5,13 @@ import "./interfaces/ITrap.sol";
 
 /**
  * @notice
- * Off-chain operators compute governance risk metrics and store them
- * in a feeder contract. The trap only evaluates encoded summaries.
+ * Detects insider-style governance manipulation using
+ * off-chain computed forensic metrics supplied via a feeder.
+ *
+ * Fully Drosera-compliant:
+ * - collect() is view and safe
+ * - shouldRespond() is pure
+ * - no events, no state writes, no block access
  */
 contract InsiderGovernanceManipulationTrap is ITrap {
     /* -------------------------------------------------------------------------- */
@@ -23,25 +28,47 @@ contract InsiderGovernanceManipulationTrap is ITrap {
     }
 
     /* -------------------------------------------------------------------------- */
-    /*                                  COLLECT                                   */
+    /*                                  Feeder                                    */
     /* -------------------------------------------------------------------------- */
 
-    /**
-     * @notice
-     * Drosera operators must supply summaries externally.
-     * collect() simply returns the latest encoded summary.
-     *
-     * If no data is available, return empty bytes.
-     */
+    /// @notice Deployed InsiderGovernanceFeeder address
+    address public immutable FEEDER;
+
+    interface IGovFeeder {
+        function getLatest()
+            external
+            view
+            returns (GovSummary memory);
+    }
+
+    constructor(address feeder) {
+        require(feeder != address(0), "ZERO_FEEDER");
+        FEEDER = feeder;
+    }
+
+    /* -------------------------------------------------------------------------- */
+    /*                                   COLLECT                                  */
+    /* -------------------------------------------------------------------------- */
+
     function collect()
         external
         view
         override
         returns (bytes memory)
     {
-        // This trap expects the operator to inject the summary.
-        // Returning empty bytes is planner-safe.
-        return bytes("");
+        uint256 size;
+        assembly {
+            size := extcodesize(FEEDER)
+        }
+        if (size == 0) return bytes("");
+
+        try IGovFeeder(FEEDER).getLatest()
+            returns (GovSummary memory g)
+        {
+            return abi.encode(g);
+        } catch {
+            return bytes("");
+        }
     }
 
     /* -------------------------------------------------------------------------- */
@@ -58,11 +85,12 @@ contract InsiderGovernanceManipulationTrap is ITrap {
             return (false, "");
         }
 
-        GovSummary memory g = abi.decode(data[0], (GovSummary));
+        GovSummary memory g =
+            abi.decode(data[0], (GovSummary));
 
         uint8 severity = 0;
 
-        // Strong insider pattern
+        // High confidence insider manipulation
         if (
             g.proposerAgeDays < 7 &&
             g.fundedFromCEX &&
@@ -71,14 +99,14 @@ contract InsiderGovernanceManipulationTrap is ITrap {
         ) {
             severity = 10;
         }
-        // Medium confidence manipulation
+        // Coordinated voting anomaly
         else if (
             g.voteSpikePercent >= 60 &&
             g.correlationScore >= 60
         ) {
             severity = 7;
         }
-        // Early anomaly
+        // Proposal frequency anomaly
         else if (
             g.proposalFrequency30d >
             g.avgProposalFrequency30d * 2
