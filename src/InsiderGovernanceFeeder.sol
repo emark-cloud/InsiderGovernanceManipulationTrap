@@ -1,17 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/**
- * @notice
- * Stores off-chain computed governance risk summaries
- * for InsiderGovernanceManipulationTrap.
- *
- * Heavy analytics happen off-chain.
- * This contract is just a trusted data carrier.
- */
 contract InsiderGovernanceFeeder {
     /* -------------------------------------------------------------------------- */
-    /*                                   Types                                    */
+    /*                                   TYPES                                    */
     /* -------------------------------------------------------------------------- */
 
     struct GovSummary {
@@ -19,19 +11,22 @@ contract InsiderGovernanceFeeder {
         bool    fundedFromCEX;
         uint32  proposalFrequency30d;
         uint32  avgProposalFrequency30d;
-        uint16  voteSpikePercent;   // % of votes in single block
-        uint16  correlationScore;   // proposer/voter overlap score
+        uint16  voteSpikePercent;
+        uint16  correlationScore;
     }
 
     /* -------------------------------------------------------------------------- */
-    /*                                   State                                    */
+    /*                                   STORAGE                                  */
     /* -------------------------------------------------------------------------- */
 
     address public owner;
     GovSummary private latest;
 
+    uint256 public lastUpdatedBlock;
+    uint256 public lastUpdatedTimestamp;
+
     /* -------------------------------------------------------------------------- */
-    /*                                   Events                                   */
+    /*                                    EVENTS                                  */
     /* -------------------------------------------------------------------------- */
 
     event GovSummaryUpdated(
@@ -40,11 +35,15 @@ contract InsiderGovernanceFeeder {
         uint32 proposalFrequency30d,
         uint32 avgProposalFrequency30d,
         uint16 voteSpikePercent,
-        uint16 correlationScore
+        uint16 correlationScore,
+        uint256 blockNumber,
+        uint256 timestamp
     );
 
+    event OwnershipTransferred(address newOwner);
+
     /* -------------------------------------------------------------------------- */
-    /*                                 Modifiers                                  */
+    /*                                   MODIFIERS                                */
     /* -------------------------------------------------------------------------- */
 
     modifier onlyOwner() {
@@ -53,29 +52,31 @@ contract InsiderGovernanceFeeder {
     }
 
     /* -------------------------------------------------------------------------- */
-    /*                                Constructor                                 */
+    /*                                 CONSTRUCTOR                                */
     /* -------------------------------------------------------------------------- */
 
-    constructor() {
-        // Drosera pattern: owner set after deployment
-        owner = address(0);
+    constructor(address initialOwner) {
+        require(initialOwner != address(0), "ZERO_OWNER");
+        owner = initialOwner;
     }
 
-    function setOwner(address newOwner) external {
-        require(owner == address(0), "OWNER_ALREADY_SET");
+    /* -------------------------------------------------------------------------- */
+    /*                             OWNERSHIP CONTROL                              */
+    /* -------------------------------------------------------------------------- */
+
+    function transferOwnership(address newOwner)
+        external
+        onlyOwner
+    {
         require(newOwner != address(0), "ZERO_OWNER");
         owner = newOwner;
+        emit OwnershipTransferred(newOwner);
     }
 
     /* -------------------------------------------------------------------------- */
-    /*                              Update Summary                                */
+    /*                              UPDATE SUMMARY                                */
     /* -------------------------------------------------------------------------- */
 
-    /**
-     * @notice
-     * Called by off-chain operator once per block (or cadence)
-     * after computing governance risk metrics.
-     */
     function updateSummary(
         uint64 proposerAgeDays,
         bool fundedFromCEX,
@@ -93,29 +94,39 @@ contract InsiderGovernanceFeeder {
             correlationScore: correlationScore
         });
 
+        lastUpdatedBlock = block.number;
+        lastUpdatedTimestamp = block.timestamp;
+
         emit GovSummaryUpdated(
             proposerAgeDays,
             fundedFromCEX,
             proposalFrequency30d,
             avgProposalFrequency30d,
             voteSpikePercent,
-            correlationScore
+            correlationScore,
+            block.number,
+            block.timestamp
         );
     }
 
     /* -------------------------------------------------------------------------- */
-    /*                                   View                                     */
+    /*                                   VIEW                                     */
     /* -------------------------------------------------------------------------- */
 
-    /**
-     * @notice
-     * Read-only access for the trap's collect().
-     */
     function getLatest()
         external
         view
         returns (GovSummary memory)
     {
         return latest;
+    }
+
+    function isFresh(uint256 maxAgeSeconds)
+        external
+        view
+        returns (bool)
+    {
+        if (lastUpdatedTimestamp == 0) return false;
+        return (block.timestamp - lastUpdatedTimestamp) <= maxAgeSeconds;
     }
 }
