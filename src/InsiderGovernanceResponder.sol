@@ -2,26 +2,47 @@
 pragma solidity ^0.8.20;
 
 /**
+ * @title InsiderGovernanceResponder
  * @notice
  * Handles responses to insider governance manipulation alerts.
- * All side effects and logging live here (NOT in the trap).
+ * All side effects live here (never in the Trap).
+ *
+ * Compatible with Drosera:
+ * - handle(bytes) is called by Drosera executor
+ * - payload format must match Trap encoding
  */
 contract InsiderGovernanceResponder {
+    /* -------------------------------------------------------------------------- */
+    /*                                   STORAGE                                  */
+    /* -------------------------------------------------------------------------- */
+
     address public owner;
-    address public caller; // Drosera relay / executor
+    address public caller; // Drosera executor / relay
 
     uint8 public severityThreshold = 7;
+
+    /* -------------------------------------------------------------------------- */
+    /*                                    EVENTS                                  */
+    /* -------------------------------------------------------------------------- */
 
     event GovernanceIncidentHandled(
         uint8  severity,
         uint64 proposerAgeDays,
         bool   fundedFromCEX,
         uint32 proposalFrequency30d,
-        uint32 avg30d,
+        uint32 avgProposalFrequency30d,
         uint16 voteSpikePercent,
         uint16 correlationScore,
         bytes32 reasonHash
     );
+
+    event CallerUpdated(address newCaller);
+    event ThresholdUpdated(uint8 newThreshold);
+    event OwnershipTransferred(address newOwner);
+
+    /* -------------------------------------------------------------------------- */
+    /*                                   MODIFIERS                                */
+    /* -------------------------------------------------------------------------- */
 
     modifier onlyOwner() {
         require(msg.sender == owner, "NOT_OWNER");
@@ -29,47 +50,75 @@ contract InsiderGovernanceResponder {
     }
 
     modifier onlyCaller() {
-        require(msg.sender == caller, "UNAUTHORIZED");
+        require(msg.sender == caller, "UNAUTHORIZED_CALLER");
         _;
     }
+
+    /* -------------------------------------------------------------------------- */
+    /*                                 CONSTRUCTOR                                */
+    /* -------------------------------------------------------------------------- */
 
     constructor() {
         owner = msg.sender;
     }
 
     /* -------------------------------------------------------------------------- */
-    /*                              ADMIN CONTROLS                                */
+    /*                              ADMIN FUNCTIONS                               */
     /* -------------------------------------------------------------------------- */
 
-    function setCaller(address c) external onlyOwner {
-        require(c != address(0), "ZERO_CALLER");
-        caller = c;
+    function setCaller(address newCaller) external onlyOwner {
+        require(newCaller != address(0), "ZERO_CALLER");
+        caller = newCaller;
+        emit CallerUpdated(newCaller);
     }
 
-    function setSeverityThreshold(uint8 s) external onlyOwner {
-        require(s > 0 && s <= 10, "INVALID_SEVERITY");
-        severityThreshold = s;
+    function setSeverityThreshold(uint8 newThreshold)
+        external
+        onlyOwner
+    {
+        require(newThreshold > 0 && newThreshold <= 10, "INVALID_THRESHOLD");
+        severityThreshold = newThreshold;
+        emit ThresholdUpdated(newThreshold);
     }
 
-    function transferOwnership(address newOwner) external onlyOwner {
+    function transferOwnership(address newOwner)
+        external
+        onlyOwner
+    {
         require(newOwner != address(0), "ZERO_OWNER");
         owner = newOwner;
+        emit OwnershipTransferred(newOwner);
     }
 
     /* -------------------------------------------------------------------------- */
     /*                                   HANDLE                                   */
     /* -------------------------------------------------------------------------- */
 
+    /**
+     * @notice Called by Drosera when Trap triggers.
+     * @param payload ABI encoded:
+     * (
+     *   uint8 severity,
+     *   uint64 proposerAgeDays,
+     *   bool fundedFromCEX,
+     *   uint32 proposalFrequency30d,
+     *   uint32 avgProposalFrequency30d,
+     *   uint16 voteSpikePercent,
+     *   uint16 correlationScore
+     * )
+     */
     function handle(bytes calldata payload)
         external
         onlyCaller
     {
+        if (payload.length == 0) return;
+
         (
             uint8 severity,
             uint64 proposerAgeDays,
             bool fundedFromCEX,
             uint32 proposalFrequency30d,
-            uint32 avg30d,
+            uint32 avgProposalFrequency30d,
             uint16 voteSpikePercent,
             uint16 correlationScore
         ) = abi.decode(
@@ -77,6 +126,7 @@ contract InsiderGovernanceResponder {
             (uint8, uint64, bool, uint32, uint32, uint16, uint16)
         );
 
+        // Ignore low-severity alerts
         if (severity < severityThreshold) {
             return;
         }
@@ -98,15 +148,20 @@ contract InsiderGovernanceResponder {
             proposerAgeDays,
             fundedFromCEX,
             proposalFrequency30d,
-            avg30d,
+            avgProposalFrequency30d,
             voteSpikePercent,
             correlationScore,
             reasonHash
         );
 
-        // Optional extensions:
+        /* ---------------------------------------------------------------------- */
+        /*                    OPTIONAL PROTOCOL-SPECIFIC ACTIONS                  */
+        /* ---------------------------------------------------------------------- */
+
+        // Example integrations:
         // pauseGovernance();
-        // enforceDelay();
-        // revokeAdmin();
+        // enforceTimelockDelay();
+        // revokeProposerRole();
+        // triggerGuardian();
     }
 }
