@@ -3,52 +3,42 @@ pragma solidity ^0.8.20;
 
 import "./interfaces/ITrap.sol";
 
-/**
- * @notice
- * Detects insider-style governance manipulation using
- * off-chain computed forensic metrics supplied via a feeder.
- *
- * Fully Drosera-compliant:
- * - collect() is view and safe
- * - shouldRespond() is pure
- * - no events, no state writes, no block access
- */
+/* -------------------------------------------------------------------------- */
+/*                                   Types                                    */
+/* -------------------------------------------------------------------------- */
+
+struct GovSummary {
+    uint64  proposerAgeDays;
+    bool    fundedFromCEX;
+    uint32  proposalFrequency30d;
+    uint32  avgProposalFrequency30d;
+    uint16  voteSpikePercent;
+    uint16  correlationScore;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                  Feeder                                    */
+/* -------------------------------------------------------------------------- */
+
+interface IGovFeeder {
+    function getLatest()
+        external
+        view
+        returns (GovSummary memory);
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                   Trap                                     */
+/* -------------------------------------------------------------------------- */
+
 contract InsiderGovernanceManipulationTrap is ITrap {
-    /* -------------------------------------------------------------------------- */
-    /*                                   Types                                    */
-    /* -------------------------------------------------------------------------- */
 
-    struct GovSummary {
-        uint64  proposerAgeDays;
-        bool    fundedFromCEX;
-        uint32  proposalFrequency30d;
-        uint32  avgProposalFrequency30d;
-        uint16  voteSpikePercent;     // % of votes in single block
-        uint16  correlationScore;     // proposer/voter overlap score
-    }
-
-    /* -------------------------------------------------------------------------- */
-    /*                                  Feeder                                    */
-    /* -------------------------------------------------------------------------- */
-
-    /// @notice Deployed InsiderGovernanceFeeder address
     address public immutable FEEDER;
-
-    interface IGovFeeder {
-        function getLatest()
-            external
-            view
-            returns (GovSummary memory);
-    }
 
     constructor(address feeder) {
         require(feeder != address(0), "ZERO_FEEDER");
         FEEDER = feeder;
     }
-
-    /* -------------------------------------------------------------------------- */
-    /*                                   COLLECT                                  */
-    /* -------------------------------------------------------------------------- */
 
     function collect()
         external
@@ -71,10 +61,6 @@ contract InsiderGovernanceManipulationTrap is ITrap {
         }
     }
 
-    /* -------------------------------------------------------------------------- */
-    /*                               SHOULD RESPOND                               */
-    /* -------------------------------------------------------------------------- */
-
     function shouldRespond(bytes[] calldata data)
         external
         pure
@@ -90,7 +76,6 @@ contract InsiderGovernanceManipulationTrap is ITrap {
 
         uint8 severity = 0;
 
-        // High confidence insider manipulation
         if (
             g.proposerAgeDays < 7 &&
             g.fundedFromCEX &&
@@ -99,14 +84,12 @@ contract InsiderGovernanceManipulationTrap is ITrap {
         ) {
             severity = 10;
         }
-        // Coordinated voting anomaly
         else if (
             g.voteSpikePercent >= 60 &&
             g.correlationScore >= 60
         ) {
             severity = 7;
         }
-        // Proposal frequency anomaly
         else if (
             g.proposalFrequency30d >
             g.avgProposalFrequency30d * 2
