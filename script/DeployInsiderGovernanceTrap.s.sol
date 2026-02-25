@@ -7,22 +7,23 @@ import {InsiderGovernanceResponder} from "../src/InsiderGovernanceResponder.sol"
 
 contract DeployInsiderGovernanceTrapScript is Script {
     function run() external {
-        // Load private key from env: PRIVATE_KEY
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerPrivateKey);
 
-        // 1. Deploy trap
-        InsiderGovernanceManipulationTrap trap = new InsiderGovernanceManipulationTrap();
+        // Replace with deployed feeder OR deploy feeder here
+        address feederAddress = 0x0000000000000000000000000000000000000001;
 
-        // 2. Deploy responder (pass a guardian address, or zero if none yet)
-        // Replace with your guardian / pauser contract if available
-        address guardianAddress = address(0);
-        InsiderGovernanceResponder responder = new InsiderGovernanceResponder(guardianAddress);
+        // 1. Deploy trap (FIXED)
+        InsiderGovernanceManipulationTrap trap =
+            new InsiderGovernanceManipulationTrap(feederAddress);
+
+        // 2. Deploy responder (no args)
+        InsiderGovernanceResponder responder =
+            new InsiderGovernanceResponder();
 
         vm.stopBroadcast();
 
-        console2.log("InsiderGovernanceManipulationTrap deployed at:", address(trap));
-        console2.log("InsiderGovernanceResponder deployed at:", address(responder));
+        console2.log("Trap deployed at:", address(trap));
+        console2.log("Responder deployed at:", address(responder));
     }
 }
-
