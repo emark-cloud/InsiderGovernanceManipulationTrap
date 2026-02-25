@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "./interfaces/ITrap.sol";
 
 /* -------------------------------------------------------------------------- */
-/*                                   Types                                    */
+/*                                   TYPES                                    */
 /* -------------------------------------------------------------------------- */
 
 struct GovSummary {
@@ -17,7 +17,7 @@ struct GovSummary {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                  Feeder                                    */
+/*                                  FEEDER                                    */
 /* -------------------------------------------------------------------------- */
 
 interface IGovFeeder {
@@ -28,7 +28,7 @@ interface IGovFeeder {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                   Trap                                     */
+/*                                   TRAP                                     */
 /* -------------------------------------------------------------------------- */
 
 contract InsiderGovernanceManipulationTrap is ITrap {
@@ -40,17 +40,20 @@ contract InsiderGovernanceManipulationTrap is ITrap {
         FEEDER = feeder;
     }
 
+    /* -------------------------------------------------------------------------- */
+    /*                                   COLLECT                                  */
+    /* -------------------------------------------------------------------------- */
+
     function collect()
         external
         view
         override
         returns (bytes memory)
     {
-        uint256 size;
-        assembly {
-            size := extcodesize(FEEDER)
+        // Modern Solidity-safe extcodesize check
+        if (FEEDER.code.length == 0) {
+            return bytes("");
         }
-        if (size == 0) return bytes("");
 
         try IGovFeeder(FEEDER).getLatest()
             returns (GovSummary memory g)
@@ -60,6 +63,10 @@ contract InsiderGovernanceManipulationTrap is ITrap {
             return bytes("");
         }
     }
+
+    /* -------------------------------------------------------------------------- */
+    /*                               SHOULD RESPOND                               */
+    /* -------------------------------------------------------------------------- */
 
     function shouldRespond(bytes[] calldata data)
         external
@@ -76,6 +83,7 @@ contract InsiderGovernanceManipulationTrap is ITrap {
 
         uint8 severity = 0;
 
+        // High confidence insider manipulation
         if (
             g.proposerAgeDays < 7 &&
             g.fundedFromCEX &&
@@ -84,12 +92,14 @@ contract InsiderGovernanceManipulationTrap is ITrap {
         ) {
             severity = 10;
         }
+        // Coordinated voting anomaly
         else if (
             g.voteSpikePercent >= 60 &&
             g.correlationScore >= 60
         ) {
             severity = 7;
         }
+        // Proposal frequency anomaly
         else if (
             g.proposalFrequency30d >
             g.avgProposalFrequency30d * 2
