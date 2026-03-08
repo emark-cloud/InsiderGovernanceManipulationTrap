@@ -33,9 +33,14 @@ interface IGovFeeder {
 
 contract InsiderGovernanceManipulationTrap is ITrap {
 
-    address public immutable FEEDER;
+    address public FEEDER;
 
-    constructor(address feeder) {
+    /* -------------------------------------------------------------------------- */
+    /*                               CONFIGURATION                                */
+    /* -------------------------------------------------------------------------- */
+
+    function setFeeder(address feeder) external {
+        require(FEEDER == address(0), "FEEDER_ALREADY_SET");
         require(feeder != address(0), "ZERO_FEEDER");
         FEEDER = feeder;
     }
@@ -50,7 +55,10 @@ contract InsiderGovernanceManipulationTrap is ITrap {
         override
         returns (bytes memory)
     {
-        // Modern Solidity-safe extcodesize check
+        if (FEEDER == address(0)) {
+            return bytes("");
+        }
+
         if (FEEDER.code.length == 0) {
             return bytes("");
         }
@@ -83,7 +91,6 @@ contract InsiderGovernanceManipulationTrap is ITrap {
 
         uint8 severity = 0;
 
-        // High confidence insider manipulation
         if (
             g.proposerAgeDays < 7 &&
             g.fundedFromCEX &&
@@ -92,14 +99,12 @@ contract InsiderGovernanceManipulationTrap is ITrap {
         ) {
             severity = 10;
         }
-        // Coordinated voting anomaly
         else if (
             g.voteSpikePercent >= 60 &&
             g.correlationScore >= 60
         ) {
             severity = 7;
         }
-        // Proposal frequency anomaly
         else if (
             g.proposalFrequency30d >
             g.avgProposalFrequency30d * 2
