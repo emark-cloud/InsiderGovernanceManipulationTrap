@@ -8,6 +8,62 @@ This is not a quiz. It's a conversation. But being sharp on the fundamentals and
 
 ---
 
+## Part 0: Know the Project's Story and People
+
+### The Team
+
+| Person | Role | Background |
+|---|---|---|
+| **Fernando D. Reyes Jr. (FDR)** | Co-Founder & CEO | U.S. Army Cyber Command veteran, NSA-trained cyber operator, MIT Cybersecurity graduate. Former CISO and Security Advisor for 50+ DeFi protocols across EVM, Dotsama, Cosmos, and Solana. |
+| **Samuel Glenn (Bobafetador)** | Co-Founder & CTO | 7 years in GPS/embedded hardware at Rockwell Collins, Collins Aerospace, BAE Systems (military software). Entered crypto in 2017, built flash loan arbitrage bots during DeFi Summer, then pivoted to building monitoring/detection systems. |
+| **Jacob Veal** | Co-Founder & Founding Engineer | 5+ years crypto engineering. Led R&D at BitGo, helped integrate MetaMask Institutional, built the Harbor wallet, developed MEV/arbitrage algorithms. Multiple ETHGlobal bounty winner. |
+| **Richard Malone** | Co-Founder & CSO | Co-author of the litepaper, Chief Security Officer. |
+
+### Funding History
+
+| Round | Amount | Led By | Date |
+|---|---|---|---|
+| Pre-seed | $1.55M | Anagram, Arrington Capital, UDHC, Comfy Capital, Bodhi Ventures + angels (Santiago Santos, Ether.fi and Mechanism Capital execs) | February 2024 |
+| Seed | $3.25M | Greenfield Capital, with Anagram, Paper Ventures, Arrington Capital, UDHC, Pulsar + angels | February 2025 |
+| **Total** | **$4.75M** | | |
+
+### Key Milestones & Timeline
+
+| Date | Event |
+|---|---|
+| Feb 2024 | $1.55M pre-seed raise announced; Drosera described as "world's first Decentralized Automated Responder Collective (DARC)" |
+| 2024 | Testnet live — 25+ protocols committed (Ion Protocol, EtherFi, Gravita) |
+| Feb 2025 | $3.25M seed round closed, total funding $4.75M |
+| Apr 2025 | Discord revamped — new roles, contribution paths, competitions |
+| Sep 30, 2025 | **Mainnet launch** — "Drosera is reality" |
+| Late 2025 | Early Supporters Initiative launched (points-based, tiered ETH contributions) |
+| Dec 2025 | Drosera-Anthias Labs collaboration announced |
+| 2026 | Incubator program (you are here) |
+
+### Partnerships & Ecosystem
+
+| Category | Partners |
+|---|---|
+| **Node Operators** | Infstones, Everstake, Cosmostation, a41, Blockscape, 01node |
+| **Security** | GoPlus (threat intelligence) |
+| **Research** | Anthias Labs (DeFi risk management — has advised Aave, Compound, Euler, Uniswap Foundation, Arbitrum, Solana Foundation) |
+| **Restaking** | EigenLayer — Drosera is one of the first Actively Validated Services (AVS), using restaked ETH for shared security |
+| **Testnet Protocols** | Ion Protocol, EtherFi, Gravita, and 22+ others |
+
+### Early Supporters Initiative
+
+A points-based program rewarding early contributors with future $DRO token rewards:
+
+| Tier | Name | ETH | Weekly Points | Duration |
+|---|---|---|---|---|
+| 1 | Early Supporter | 0.009 | 100 | 3 months |
+| 2 | Droseran | 0.018 | 200 | 6 months |
+| 3 | Giga Droseran | 0.300 | 300 | 12 months |
+
+Points are tied to rewards at the Token Generation Event (TGE). Higher tiers get full reward unlocks and priority access. Participants gain access to Trap creation, updates, and the Alerting BETA.
+
+---
+
 ## Part 1: Key Facts to Have Ready
 
 ### What Drosera Is (30-second pitch)
@@ -167,7 +223,14 @@ Drosera is a decentralized security automation layer for Ethereum. It lets proto
 
 | Stat | Value |
 |---|---|
+| **Project** | |
+| Total funding raised | $4.75M (pre-seed $1.55M + seed $3.25M) |
+| Mainnet launch date | September 30, 2025 |
+| Testnet protocols committed | 25+ (Ion Protocol, EtherFi, Gravita...) |
+| Node operator partners | 6 (Infstones, Everstake, Cosmostation, a41, Blockscape, 01node) |
+| **The Problem** | |
 | DeFi losses in 2022 | $3.8 billion |
+| Historical DeFi losses (total) | $80+ billion |
 | Nomad hack total | ~$190M |
 | Nomad — estimated saveable by Drosera | ~$42.4M (WBTC alone) |
 | Wormhole hack | $321M (120,000 wETH) |
@@ -176,6 +239,7 @@ Drosera is a decentralized security automation layer for Ethereum. It lets proto
 | Dynamic analysis detection rate | ~37% of audit findings |
 | Data validation flaws in audits | 36% of findings |
 | Access control issues in audits | 10% of findings |
+| **Technical** | |
 | Operator consensus threshold | 2/3 majority (BLS signatures) |
 | Passive reward share | 70% of Hydration Stream |
 | Active reward share | 20% of Hydration Stream |
@@ -195,6 +259,10 @@ Drosera is a decentralized security automation layer for Ethereum. It lets proto
   - How does the team see the educator vs. builder split in terms of what's needed most right now?
   - What does success look like for someone in this program?
   - Is there a roadmap for features like cross-chain traps or restaking integration that contributors should be aware of?
+  - How is the Anthias Labs collaboration shaping trap development for lending protocols?
+  - With 25+ protocols from testnet, what's the mainnet onboarding pipeline looking like?
+  - How is the EigenLayer AVS integration progressing — is operator restaking live or still in development?
+  - What's the timeline for $DRO TGE, and how does the Incubator relate to it?
 
 ---
 
