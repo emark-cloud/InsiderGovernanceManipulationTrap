@@ -10,7 +10,6 @@
 [![Semaphore](https://img.shields.io/badge/Semaphore-V4-blue?style=flat-square)](https://semaphore.pse.dev)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
-**Live Demo:** [zkfabric.vercel.app](https://zkfabric.vercel.app)
 **Contracts:** Deployed on HashKey Chain Testnet (Chain ID: 133)
 **Built for:** [HashKey Chain On-Chain Horizon Hackathon 2026](https://dorahacks.io/hackathon/2045) — ZKID Track ($10K Prize Pool)
 
