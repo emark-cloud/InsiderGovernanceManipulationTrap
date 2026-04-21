@@ -187,7 +187,7 @@ The standard design pattern is **snapshot comparison**.
 `collect()` returns a snapshot:
 
 ```
-(timestamp, blockNumber, metrics...)
+(blockNumber, monitoredTarget, metrics...)
 ```
 
 Operators pass samples to the trap:
@@ -198,6 +198,23 @@ data[1..n] → previous snapshots
 ```
 
 The trap compares snapshots to detect anomalies.
+
+### Required Snapshot Fields
+
+Every Snapshot struct **must** include:
+
+- `uint256 blockNumber` — the block at which `collect()` ran. Enables sample‑ordering validation (Section 5) and lets the responder record `currentBlockNumber` / `previousBlockNumber` on each incident.
+- The **monitored target address** (e.g. `address safeProxy`, `address pool`, `address oracle`). `shouldRespond()` is `pure` and cannot read immutable storage, so without this the responder has no way to bind an incident to a specific target. A responder receiving `safeProxy = address(0)` cannot tell which wallet to pause.
+
+Populate these in `collect()` from `block.number` and the trap's immutable target address.
+
+```solidity
+struct Snapshot {
+    address monitoredTarget;    // REQUIRED
+    uint256 blockNumber;        // REQUIRED
+    // ... protocol-specific metrics
+}
+```
 
 ---
 
@@ -265,6 +282,32 @@ A reverting `collect()` will break:
 • operator execution
 • trap sampling
 
+### Explicit Read‑Status Flags (Prefer over Sentinel Values)
+
+A common pattern is to return `address(0)` (or `0`, or `bytes32(0)`) when a read fails. This is ambiguous: the responder cannot distinguish "the read failed" from "the value is legitimately zero." For critical fields, pair every fallible read with an explicit `bool xxxReadOk` flag:
+
+```solidity
+// Weak — address(0) overloaded as both "read failed" and "no value"
+function _readGuard(address safe) internal view returns (address) {
+    try ISafe(safe).getStorageAt(GUARD_SLOT, 1) returns (bytes memory r) {
+        if (r.length >= 32) return address(uint160(uint256(bytes32(r))));
+    } catch {}
+    return address(0);
+}
+
+// Better — explicit status flag
+function _readGuard(address safe) internal view returns (bool ok, address guard) {
+    try ISafe(safe).getStorageAt(GUARD_SLOT, 1) returns (bytes memory r) {
+        if (r.length >= 32) return (true, address(uint160(uint256(bytes32(r)))));
+        return (false, address(0));
+    } catch {
+        return (false, address(0));
+    }
+}
+```
+
+With read‑status flags, `shouldRespond()` can treat **loss of visibility** as its own actionable threat (`MonitoringDegraded`) — an attacker who breaks the trap's RPC path or DoS‑es a read should not silently disable your detection. Failing closed is safer than failing open.
+
 ### Reading Storage Slots
 
 Some protocols expose `getStorageAt()` for reading arbitrary storage slots. This is useful for monitoring proxy implementation addresses (slot 0), guard addresses, or other internal state that may not have a getter:
@@ -298,6 +341,39 @@ for (uint256 page = 0; page < MAX_PAGES; page++) {
 
 Reading only the first page can miss changes — an attacker could add a malicious entry beyond page boundaries.
 
+### Completeness Tracking
+
+A bare `break` on catch or on hitting the page cap silently treats an incomplete read as "done." This is unsafe: a catch after reading 2 of 5 pages looks indistinguishable from a wallet with 2 modules. Return an explicit `complete` flag so the caller can tell a truthful empty list from a truncated one:
+
+```solidity
+function _readModules(address safe)
+    internal view
+    returns (bool complete, uint256 count, bytes32 hash)
+{
+    address start = SENTINEL;
+    bytes32 runningHash = bytes32(0);
+    uint256 total = 0;
+
+    for (uint256 page = 0; page < MAX_PAGES; page++) {
+        try ISafe(safe).getModulesPaginated(start, PAGE_SIZE)
+            returns (address[] memory items, address next)
+        {
+            total += items.length;
+            runningHash = keccak256(abi.encode(runningHash, items));
+            if (next == SENTINEL || next == address(0) || items.length == 0) {
+                return (true, total, runningHash); // reached end cleanly
+            }
+            start = next;
+        } catch {
+            return (false, total, runningHash);   // partial read
+        }
+    }
+    return (false, total, runningHash);            // hit page cap
+}
+```
+
+Treat `complete == false` as degraded monitoring (Section 4 "Explicit Read‑Status Flags"). Do not fire a relative module‑change threat on an incomplete read — the absent pages will look like modules vanished.
+
 ---
 
 # 5. Designing shouldRespond()
@@ -319,6 +395,36 @@ if (data.length == 0 || data[0].length == 0)
 ```
 
 Never assume valid input.
+
+### Strict Sample Ordering Validation
+
+Drosera operators pass `data[0]` as newest and `data[n-1]` as oldest, expected to be contiguous. **Do not trust this** — malformed, reordered, or gapped samples will poison comparison logic (a "drain" detected across a 1000‑block gap is meaningless). Validate explicitly:
+
+```solidity
+// Require newest → oldest, strictly contiguous, no zero-block samples
+for (uint256 i = 1; i < data.length; i++) {
+    Snapshot memory newer = abi.decode(data[i - 1], (Snapshot));
+    Snapshot memory older = abi.decode(data[i],     (Snapshot));
+    if (
+        newer.blockNumber == 0 ||
+        older.blockNumber == 0 ||
+        newer.blockNumber != older.blockNumber + 1
+    ) {
+        return (false, ""); // malformed window, do not evaluate
+    }
+}
+```
+
+Also validate that every sample refers to the same monitored target:
+
+```solidity
+if (current.monitoredTarget == address(0) ||
+    previous.monitoredTarget != current.monitoredTarget) {
+    return (false, "");
+}
+```
+
+This is why Section 3.2 requires `blockNumber` and `monitoredTarget` in every Snapshot.
 
 ### Payload Must Match Response Function
 
@@ -354,6 +460,66 @@ if (data.length > 2) {
 ```
 
 Set `block_sample_size` in `drosera.toml` large enough to support window‑based analysis (e.g., 10 blocks for a 15% cumulative drain check).
+
+### Absolute vs Relative Integrity Checks
+
+Detection logic falls into two categories. A production trap needs both:
+
+**Absolute checks** compare current state against a known‑good baseline hardcoded at trap construction (expected masterCopy, expected threshold, expected owners hash):
+
+```solidity
+if (current.masterCopy != EXPECTED_MASTER_COPY) {
+    return _incident(ThreatType.MasterCopyChanged, ...);
+}
+```
+
+**Relative checks** compare current against previous snapshot (guard changed, modules changed, balance dropped):
+
+```solidity
+if (current.guard != previous.guard) {
+    return _incident(ThreatType.GuardChanged, ...);
+}
+```
+
+Using only relative checks misses attacks that were already present when the trap was deployed — if the masterCopy was already swapped at deploy time, `current == previous` and nothing fires. Using only absolute checks misses incremental drift that wasn't anticipated. Combine them: absolute checks first (baseline integrity), relative checks second (change detection).
+
+Baselines should be generated from an offline, governance‑controlled process, not read on‑chain at construction (otherwise an attacker who controls state at deploy time pins the baseline to the compromised value).
+
+### Structured Incident Payloads
+
+Loose `abi.encode(uint8 threatType, bytes details)` works but is not self‑describing — the responder has to know the positional shape out‑of‑band, and `details` varies per threat type. For production traps, define a named struct and encode that:
+
+```solidity
+struct IncidentPayload {
+    ThreatType threatType;            // enum-backed uint8
+    address monitoredTarget;          // which safe/pool/oracle
+    uint256 currentBlockNumber;
+    uint256 previousBlockNumber;
+    bytes details;                    // threat-specific extras
+}
+
+return (true, abi.encode(IncidentPayload({
+    threatType: ThreatType.MasterCopyChanged,
+    monitoredTarget: current.monitoredTarget,
+    currentBlockNumber: current.blockNumber,
+    previousBlockNumber: previous.blockNumber,
+    details: abi.encode(EXPECTED_MASTER_COPY, current.masterCopy)
+})));
+```
+
+Matching responder signature:
+
+```solidity
+function handleIncident(bytes calldata rawPayload) external;
+```
+
+Benefits:
+- Self‑describing — one named field per piece of context
+- Stable ABI — add fields at the end without breaking existing decoders
+- Easy idempotency — `keccak256(rawPayload)` is a natural incident ID
+- Cleaner logs — responder emits each field as an indexed event arg
+
+Keep `details` as `bytes` for threat‑specific extras rather than bloating the base struct.
 
 ### Multi‑Vector Detection
 
@@ -505,6 +671,59 @@ function setAllowed(address caller, bool allowed) external onlyAdmin {
 
 For demos and testing, removing auth entirely is also acceptable — the Drosera network already controls who can trigger responses via configuration.
 
+### Idempotent Execution
+
+A responder may receive the same incident more than once — an operator retry, a relayer re‑submission, a chain reorg. Executing the downstream pause twice is best‑case wasteful and worst‑case harmful (double‑billed fees, inconsistent state, event spam). Make `handleIncident` idempotent by deduplicating on the payload hash:
+
+```solidity
+mapping(bytes32 => bool) public executedIncidentHash;
+
+function handleIncident(bytes calldata rawPayload) external onlyAuthorized {
+    bytes32 incidentHash = keccak256(rawPayload);
+    if (executedIncidentHash[incidentHash]) return;   // already handled
+    executedIncidentHash[incidentHash] = true;
+
+    // ... execute response
+}
+```
+
+The same payload hashing to the same ID guarantees a retry is a no‑op. Note this is a dedup, not a rate‑limiter — for rate limiting use a cooldown block window.
+
+### Guardian Registry (Fan‑Out Pattern)
+
+A responder hardcoded to one downstream target is a single point of failure and a deployment‑time commitment. Production responders should **fan out to an allowlist of approved emergency targets** managed by an owner/governance address:
+
+```solidity
+contract SafeGuardianRegistry {
+    address public owner;
+    mapping(address => bool) public approvedTargets;
+    address[] public targets;
+
+    function setTarget(address target, bool approved) external onlyOwner {
+        if (approved && !approvedTargets[target]) targets.push(target);
+        approvedTargets[target] = approved;
+    }
+    function getTargets() external view returns (address[] memory) { return targets; }
+}
+
+interface IEmergencyActionTarget {
+    function emergencyPause(bytes calldata incidentPayload) external;
+}
+
+// inside responder.handleIncident():
+address[] memory targets = registry.getTargets();
+for (uint256 i = 0; i < targets.length; i++) {
+    if (!registry.approvedTargets(targets[i])) continue;
+    try IEmergencyActionTarget(targets[i]).emergencyPause(rawPayload) {
+        emit DownstreamPauseAttempt(targets[i], true);
+    } catch {
+        emit DownstreamPauseAttempt(targets[i], false);
+    }
+}
+```
+
+This gives governance the ability to add, rotate, or remove emergency hooks without redeploying the responder — and isolates a single misbehaving target so it cannot prevent the others from being paused.
+
 ### Additional Protections
 
 Optional protections:
@@ -512,6 +731,7 @@ Optional protections:
 • cooldown periods
 • multi‑sig approval for unpausing
 • escalation tiers
+• global pause switch on the responder itself (kill‑switch for false‑positive storms)
 
 ---
 
@@ -682,8 +902,14 @@ Before mainnet activation:
 ### Core Contract Requirements
 - [ ] `collect()` is `external view` and cannot revert
 - [ ] `collect()` returns structured `abi.encode(CollectOutput(...))` with safe defaults on failure
+- [ ] Snapshot includes `blockNumber` and the monitored target address
+- [ ] Every fallible read has an explicit `xxxReadOk` flag (no ambiguous `address(0)` sentinels)
+- [ ] Paginated reads track completeness (`complete` flag) and do not silently treat partial reads as empty
 - [ ] `shouldRespond()` is `external pure`
+- [ ] `shouldRespond()` validates strict newest→oldest contiguous sample ordering
+- [ ] `shouldRespond()` validates every sample refers to the same monitored target
 - [ ] `shouldRespond()` decodes samples and applies deterministic logic only
+- [ ] Both absolute (vs baseline) and relative (vs previous) integrity checks are present
 - [ ] All inputs validated — empty arrays, invalid data, zero‑length bytes handled safely
 
 ### Payload & Response Alignment
@@ -692,6 +918,8 @@ Before mainnet activation:
 - [ ] Response contract parameters match the payload encoding
 - [ ] Response contract deployed and accessible
 - [ ] Responder auth allows the actual Drosera executor address(es)
+- [ ] Responder is idempotent (dedup on incident hash) — replaying the same incident is a no‑op
+- [ ] For multi‑target containment: approved targets managed via registry/allowlist, not hardcoded
 
 ### Determinism & Safety
 - [ ] No randomness, no off‑chain assumptions, no `msg.sender` dependencies
