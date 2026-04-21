@@ -114,6 +114,11 @@ A minimal on‑chain storage layer that:
 • Exposes a `view` getter for traps
 • Is controlled by a trusted operator
 
+Feeders come in two flavors and a single trap may use both:
+
+- **Analytics feeder** — populated by off‑chain analytics with time‑sensitive data (latest price snapshot, rolling averages, mempool signals). The trap reads the latest record in `collect()`.
+- **Config feeder** (a.k.a. **BaselineFeeder**) — populated by governance with slow‑moving expected baselines (expected masterCopy, expected threshold, expected owners hash). Exists because `pure shouldRespond()` cannot read state, so baselines must flow through the snapshot. See §5 "BaselineFeeder Pattern".
+
 ### Trap Contract
 
 The Drosera trap itself:
@@ -308,6 +313,27 @@ function _readGuard(address safe) internal view returns (bool ok, address guard)
 
 With read‑status flags, `shouldRespond()` can treat **loss of visibility** as its own actionable threat (`MonitoringDegraded`) — an attacker who breaks the trap's RPC path or DoS‑es a read should not silently disable your detection. Failing closed is safer than failing open.
 
+This rule applies to **token balance reads too**, not just protocol‑specific getters. A bare `IERC20(token).balanceOf(account)` returns `0` on any failure (token contract missing, RPC degradation, unexpected ABI change), which is ambiguous with a legitimate zero balance and — worse — can masquerade as a balance drain:
+
+```solidity
+// Weak — failed read looks like a drain
+function _balanceOf(address token, address who) internal view returns (uint256) {
+    try IERC20(token).balanceOf(who) returns (uint256 b) { return b; } catch {}
+    return 0;
+}
+
+// Better — paired ok flag; aggregate only sums successful reads
+function _balanceOf(address token, address who)
+    internal view returns (bool ok, uint256 bal)
+{
+    if (token == address(0)) return (true, 0);
+    try IERC20(token).balanceOf(who) returns (uint256 b) { return (true, b); }
+    catch { return (false, 0); }
+}
+```
+
+Aggregate balance fields (`aggregateBalance = ethBal + stethBal + methBal + ...`) must be built only from reads whose `ok` flag is true, and the snapshot must carry a `balancesReadOk` flag that drives `MonitoringDegraded`. Drain‑style relative checks (`BalanceDrain`, `GradualDrain`) must additionally be gated on the **previous**/**oldest** sample's `balancesReadOk` — a recovering RPC returning real balances after a degraded window must never look like a drain.
+
 ### Reading Storage Slots
 
 Some protocols expose `getStorageAt()` for reading arbitrary storage slots. This is useful for monitoring proxy implementation addresses (slot 0), guard addresses, or other internal state that may not have a getter:
@@ -396,6 +422,31 @@ if (data.length == 0 || data[0].length == 0)
 
 Never assume valid input.
 
+### Malformed‑Bytes Safety
+
+Empty‑bytes guards are necessary but not sufficient. `abi.decode(bytes, (Snapshot))` **reverts** on non‑empty but malformed input (wrong length, invalid bool byte, garbage payload). A reverting `shouldRespond()` brings down the whole operator consensus call at the exact moment you want graceful fail‑closed behavior.
+
+For production traps, prefer a length check + manual slot parsing over `abi.decode` on the snapshot:
+
+```solidity
+// Snapshot is all-static (no dynamic tails): fieldCount * 32 bytes
+uint256 internal constant ENCODED_SNAPSHOT_LEN = FIELD_COUNT * 32;
+
+function _decodeSnapshot(bytes calldata raw) internal pure returns (Snapshot memory s) {
+    if (raw.length != ENCODED_SNAPSHOT_LEN) return s;     // graceful zero snapshot
+    assembly {
+        let p := raw.offset
+        mstore(add(s, 0x00), calldataload(add(p, 0x00)))  // field 0
+        mstore(add(s, 0x20), calldataload(add(p, 0x20)))  // field 1
+        // ... one calldataload per field
+    }
+}
+```
+
+Permissive bool decode (`word != 0`) keeps the parser total — no input of the expected length can ever revert. Combine with the empty‑bytes guard above and an "empty previous sample is benign" policy (return `(false, "")` and skip relative checks) so a single bad sample cannot take down the consensus round.
+
+This also applies to any nested decoding in `details` payloads — wrap them in helper functions that return safe defaults rather than letting `abi.decode` propagate.
+
 ### Strict Sample Ordering Validation
 
 Drosera operators pass `data[0]` as newest and `data[n-1]` as oldest, expected to be contiguous. **Do not trust this** — malformed, reordered, or gapped samples will poison comparison logic (a "drain" detected across a 1000‑block gap is meaningless). Validate explicitly:
@@ -465,10 +516,11 @@ Set `block_sample_size` in `drosera.toml` large enough to support window‑based
 
 Detection logic falls into two categories. A production trap needs both:
 
-**Absolute checks** compare current state against a known‑good baseline hardcoded at trap construction (expected masterCopy, expected threshold, expected owners hash):
+**Absolute checks** compare current state against a known‑good baseline (expected masterCopy, expected threshold, expected owners hash) supplied by a governance‑owned config contract:
 
 ```solidity
-if (current.masterCopy != EXPECTED_MASTER_COPY) {
+if (current.baselineConfigured &&
+    current.masterCopy != current.expectedMasterCopy) {
     return _incident(ThreatType.MasterCopyChanged, ...);
 }
 ```
@@ -483,7 +535,46 @@ if (current.guard != previous.guard) {
 
 Using only relative checks misses attacks that were already present when the trap was deployed — if the masterCopy was already swapped at deploy time, `current == previous` and nothing fires. Using only absolute checks misses incremental drift that wasn't anticipated. Combine them: absolute checks first (baseline integrity), relative checks second (change detection).
 
-Baselines should be generated from an offline, governance‑controlled process, not read on‑chain at construction (otherwise an attacker who controls state at deploy time pins the baseline to the compromised value).
+### BaselineFeeder Pattern (Governance‑Driven Config for `pure shouldRespond`)
+
+`shouldRespond()` is `pure` — it cannot read contract state, cannot read immutables, and cannot access `address(this)`. Hardcoding baselines as `constant` compiles but is deployment‑fragile: every monitored target needs a bespoke build, baseline rotation means redeploying code, and source‑edit‑driven config is not what teams mean by production‑ready infrastructure.
+
+The correct pattern is a governance‑owned **BaselineFeeder** contract that the trap reads in `collect()` and **embeds the expected values into every snapshot**. `shouldRespond()` then consumes them from the sample bytes, staying `pure`:
+
+```solidity
+interface IBaselineFeeder {
+    struct Baseline {
+        address masterCopy;
+        uint256 threshold;
+        uint256 ownerCount;
+        bytes32 ownersHash;
+        bool configured;
+    }
+    function getBaseline(address target) external view returns (Baseline memory);
+}
+
+// inside collect():
+bool cfg; address expMC; uint256 expThr; uint256 expOC; bytes32 expOH;
+try IBaselineFeeder(BASELINE_FEEDER).getBaseline(TARGET) returns (
+    IBaselineFeeder.Baseline memory b
+) {
+    cfg = b.configured; expMC = b.masterCopy;
+    expThr = b.threshold; expOC = b.ownerCount; expOH = b.ownersHash;
+} catch { /* cfg stays false */ }
+
+return abi.encode(Snapshot({
+    /* ... observed values ... */
+    baselineConfigured: cfg,
+    expectedMasterCopy: expMC,
+    expectedThreshold:  expThr,
+    expectedOwnerCount: expOC,
+    expectedOwnersHash: expOH
+}));
+```
+
+Rotation happens on‑chain via `feeder.setBaseline(target, mc, thr, oc, ownersHash)` behind a governance multisig + timelock — no trap redeploy. A reading failure or an unconfigured target sets `baselineConfigured = false`, and `shouldRespond()` must skip absolute checks in that case (relative checks still fire).
+
+Do **not** read the baseline on‑chain at deployment from the target itself — an attacker who controls state at deploy time would pin the baseline to the compromised value. The feeder's write path must be governance‑controlled, independent of the monitored target.
 
 ### Structured Incident Payloads
 
@@ -503,7 +594,7 @@ return (true, abi.encode(IncidentPayload({
     monitoredTarget: current.monitoredTarget,
     currentBlockNumber: current.blockNumber,
     previousBlockNumber: previous.blockNumber,
-    details: abi.encode(EXPECTED_MASTER_COPY, current.masterCopy)
+    details: abi.encode(current.expectedMasterCopy, current.masterCopy)
 })));
 ```
 
@@ -691,16 +782,24 @@ The same payload hashing to the same ID guarantees a retry is a no‑op. Note th
 
 ### Guardian Registry (Fan‑Out Pattern)
 
-A responder hardcoded to one downstream target is a single point of failure and a deployment‑time commitment. Production responders should **fan out to an allowlist of approved emergency targets** managed by an owner/governance address:
+A responder hardcoded to one downstream target is a single point of failure and a deployment‑time commitment. Production responders should **fan out to a bounded allowlist of approved emergency targets** managed by an owner/governance address:
 
 ```solidity
 contract SafeGuardianRegistry {
+    uint256 public constant MAX_TARGETS = 16;         // bounds fan-out gas
+
     address public owner;
     mapping(address => bool) public approvedTargets;
+    mapping(address => bool) internal _seen;          // ever pushed?
     address[] public targets;
 
     function setTarget(address target, bool approved) external onlyOwner {
-        if (approved && !approvedTargets[target]) targets.push(target);
+        require(target != address(0), "zero target");
+        if (!_seen[target]) {
+            require(targets.length < MAX_TARGETS, "max targets");
+            _seen[target] = true;
+            targets.push(target);                     // push at most once
+        }
         approvedTargets[target] = approved;
     }
     function getTargets() external view returns (address[] memory) { return targets; }
@@ -722,7 +821,16 @@ for (uint256 i = 0; i < targets.length; i++) {
 }
 ```
 
+Two subtleties worth calling out:
+
+- **Duplicate protection.** A naïve `if (approved && !approvedTargets[target]) targets.push(target)` re‑pushes a target after a `revoke → re‑approve` cycle, producing a duplicate in `targets[]` and therefore duplicate downstream calls when the responder fans out. Track insertion separately with a `_seen` flag, as shown above. `approvedTargets` stays the live flag gating fan‑out; `targets[]` is append‑only for stable off‑chain indexing.
+- **Bounded fan‑out.** The responder iterates `targets[]` inside a single on‑chain call. Without an explicit cap (`MAX_TARGETS`), a registry that has been appended to many times becomes gas‑fragile at the exact moment you need it most — an incident. If you expect more than ~16 distinct targets, shard responders by domain (core, treasury, bridges, ...) rather than growing one unbounded list.
+
 This gives governance the ability to add, rotate, or remove emergency hooks without redeploying the responder — and isolates a single misbehaving target so it cannot prevent the others from being paused.
+
+### Governance‑Compatible vs Governance‑Managed
+
+A registry + feeder + responder tuple with `owner`/`admin`/`relayer` fields is **governance‑compatible**: the code allows a multisig + timelock to take those roles. Whether the system is actually **governance‑managed** depends on the deployment — an EOA as owner is governance‑compatible but not governance‑managed. Production submissions should deploy all privileged roles behind a real multisig + timelock and state in their README that this is an operational property, not a property of the source alone.
 
 ### Additional Protections
 
@@ -904,12 +1012,16 @@ Before mainnet activation:
 - [ ] `collect()` returns structured `abi.encode(CollectOutput(...))` with safe defaults on failure
 - [ ] Snapshot includes `blockNumber` and the monitored target address
 - [ ] Every fallible read has an explicit `xxxReadOk` flag (no ambiguous `address(0)` sentinels)
+- [ ] Token balance reads return `(ok, bal)`; aggregate fields only sum successful reads; snapshot carries a `balancesReadOk` flag that drives `MonitoringDegraded`
+- [ ] Drain‑style relative checks are gated on the previous/oldest sample's `balancesReadOk` so a recovering RPC cannot look like a drain
 - [ ] Paginated reads track completeness (`complete` flag) and do not silently treat partial reads as empty
 - [ ] `shouldRespond()` is `external pure`
 - [ ] `shouldRespond()` validates strict newest→oldest contiguous sample ordering
 - [ ] `shouldRespond()` validates every sample refers to the same monitored target
 - [ ] `shouldRespond()` decodes samples and applies deterministic logic only
+- [ ] `shouldRespond()` is safe against **malformed** (non‑empty, wrong‑length, garbage) snapshot bytes — length check + manual parsing, not raw `abi.decode`
 - [ ] Both absolute (vs baseline) and relative (vs previous) integrity checks are present
+- [ ] Baseline `(masterCopy, threshold, ownerCount, ownersHash, ...)` is read from a governance‑owned feeder at `collect()` time and embedded in every snapshot; absolute checks are gated on `baselineConfigured`; baseline rotation needs no trap redeploy
 - [ ] All inputs validated — empty arrays, invalid data, zero‑length bytes handled safely
 
 ### Payload & Response Alignment
@@ -920,6 +1032,9 @@ Before mainnet activation:
 - [ ] Responder auth allows the actual Drosera executor address(es)
 - [ ] Responder is idempotent (dedup on incident hash) — replaying the same incident is a no‑op
 - [ ] For multi‑target containment: approved targets managed via registry/allowlist, not hardcoded
+- [ ] Registry caps total targets at `MAX_TARGETS` so fan‑out gas is bounded
+- [ ] Registry uses a `_seen` insertion flag so `revoke → re‑approve` cannot duplicate a target in the array or cause duplicate downstream calls
+- [ ] Privileged roles (feeder owner, registry owner, responder admin) are deployed behind a governance multisig + timelock, not EOAs — code is governance‑*compatible*, deployment makes it governance‑*managed*
 
 ### Determinism & Safety
 - [ ] No randomness, no off‑chain assumptions, no `msg.sender` dependencies
