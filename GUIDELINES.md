@@ -161,6 +161,41 @@ shouldAlert()    → external pure
 
 The same input must **always produce the same output**.
 
+### Constructorless Deployment
+
+Drosera deploys traps with **no constructor arguments**. Any monitored address, feeder address, or other deployment‑time config must therefore live in source code that's resolvable at compile time — *not* in `immutable` fields populated by constructor args. Three consequences:
+
+- The trap's `constructor() {}` body is empty.
+- `shouldRespond()` is `pure`, so it can't read `immutable`s either. Operational config must reach `shouldRespond()` through `collect()`'s snapshot (see the BaselineFeeder pattern in §5) or through `pure` accessor functions returning constants.
+- Hardcoding addresses as `internal constant` directly in the trap works but smears config across the file. The clean pattern is a dedicated config library:
+
+```solidity
+// TrapDeployConfig.sol — single source of truth for deployment-time addresses
+library TrapDeployConfig {
+    address internal constant MONITORED_TARGET =
+        0x1Db92e2EeBC8E0c075a02BeA49a2935BcD2dFCF4;
+    address internal constant BASELINE_FEEDER =
+        0x1111111111111111111111111111111111111111; // replace before build
+}
+
+// Trap.sol — surface them via pure accessors so call sites read like fields
+import {TrapDeployConfig} from "./TrapDeployConfig.sol";
+
+contract MyTrap is ITrap {
+    constructor() {}
+
+    function MONITORED_TARGET() public pure returns (address) {
+        return TrapDeployConfig.MONITORED_TARGET;
+    }
+    function BASELINE_FEEDER() public pure returns (address) {
+        return TrapDeployConfig.BASELINE_FEEDER;
+    }
+    // ... usage: target.balance, IFeeder(BASELINE_FEEDER()).getBaseline(...)
+}
+```
+
+Rotating the feeder address still requires a trap rebuild + redeploy (it's compile‑time). What it *doesn't* require is a constructor argument — and that's the property Drosera's deployment pipeline assumes. The mutable‑at‑runtime piece (the baseline values themselves) lives in the feeder, where governance can rotate without touching the trap. See §5 BaselineFeeder Pattern.
+
 ---
 
 # 3. Trap Design Principles
@@ -554,25 +589,39 @@ interface IBaselineFeeder {
 }
 
 // inside collect():
-bool cfg; address expMC; uint256 expThr; uint256 expOC; bytes32 expOH;
-try IBaselineFeeder(BASELINE_FEEDER).getBaseline(TARGET) returns (
-    IBaselineFeeder.Baseline memory b
-) {
-    cfg = b.configured; expMC = b.masterCopy;
-    expThr = b.threshold; expOC = b.ownerCount; expOH = b.ownersHash;
-} catch { /* cfg stays false */ }
+(bool baselineReadOk, IBaselineFeeder.Baseline memory b) = _readBaseline(TARGET);
 
 return abi.encode(Snapshot({
     /* ... observed values ... */
-    baselineConfigured: cfg,
-    expectedMasterCopy: expMC,
-    expectedThreshold:  expThr,
-    expectedOwnerCount: expOC,
-    expectedOwnersHash: expOH
+    baselineReadOk:     baselineReadOk,
+    baselineConfigured: b.configured,
+    expectedMasterCopy: b.masterCopy,
+    expectedThreshold:  b.threshold,
+    expectedOwnerCount: b.ownerCount,
+    expectedOwnersHash: b.ownersHash
 }));
+
+function _readBaseline(address target)
+    internal view returns (bool ok, IBaselineFeeder.Baseline memory b)
+{
+    try IBaselineFeeder(BASELINE_FEEDER()).getBaseline(target) returns (
+        IBaselineFeeder.Baseline memory out
+    ) {
+        return (true, out);
+    } catch {
+        return (false, b); // ok=false, fields stay zero
+    }
+}
 ```
 
-Rotation happens on‑chain via `feeder.setBaseline(target, mc, thr, oc, ownersHash)` behind a governance multisig + timelock — no trap redeploy. A reading failure or an unconfigured target sets `baselineConfigured = false`, and `shouldRespond()` must skip absolute checks in that case (relative checks still fire).
+Note two **distinct** flags — they answer different questions and a trap that conflates them is buggy:
+
+- **`baselineReadOk`** — did the feeder call succeed? `false` means the feeder is unreachable or its code is missing. This is a *monitoring degradation* (loss of visibility) and should drive `MonitoringDegraded`, exactly like a failed `getStorageAt` on the monitored target.
+- **`baselineConfigured`** — did `getBaseline(target)` return a record marked `configured = true`? `false` here is a *deliberate operator choice* (the Safe just hasn't been baselined yet) and should merely skip absolute checks — relative checks still fire normally.
+
+Without `baselineReadOk`, a misconfigured or compromised feeder is silently indistinguishable from an unconfigured one — and the trap loses its absolute‑check arm with no signal.
+
+Rotation happens on‑chain via `feeder.setBaseline(target, mc, thr, oc, ownersHash)` behind a governance multisig + timelock — no trap redeploy. Absolute checks (`MasterCopyChanged`, absolute `ConfigChanged`) must be gated on `baselineConfigured`; relative checks (diff vs previous snapshot) and non‑baseline triggers still fire when the baseline isn't set.
 
 Do **not** read the baseline on‑chain at deployment from the target itself — an attacker who controls state at deploy time would pin the baseline to the compromised value. The feeder's write path must be governance‑controlled, independent of the monitored target.
 
@@ -688,6 +737,42 @@ Examples:
 
 Use **basis‑point thresholds** whenever possible.
 
+### Debouncing Loss‑of‑Visibility Signals
+
+`MonitoringDegraded` (any `xxxReadOk = false`) is actionable but inherently noisy — a single bad RPC poll, a momentary archive lag, or a one‑block reorg can flip a read flag for one sample. Auto‑pausing a protocol on a single degraded sample treats every transient RPC blip as an incident.
+
+For signals derived purely from **loss of visibility** (any `xxxReadOk` flag, including `baselineReadOk`), require the degradation to persist for **at least two consecutive samples** before firing:
+
+```solidity
+function _monitoringDegraded(Snapshot memory s) internal pure returns (bool) {
+    return (
+        !s.masterCopyReadOk ||
+        !s.guardReadOk      ||
+        !s.modulesReadComplete ||
+        !s.balancesReadOk   ||
+        !s.baselineReadOk
+    );
+}
+
+// inside shouldRespond():
+if (_monitoringDegraded(current) && _monitoringDegraded(previous)) {
+    return _incident(ThreatType.MonitoringDegraded, current, previous,
+        abi.encode(
+            current.masterCopyReadOk,  current.guardReadOk,
+            current.modulesReadComplete, current.balancesReadOk,
+            current.baselineReadOk,
+            previous.masterCopyReadOk, previous.guardReadOk,
+            previous.modulesReadComplete, previous.balancesReadOk,
+            previous.baselineReadOk
+        )
+    );
+}
+```
+
+This still catches a sustained outage (the attack‑relevant case — an attacker who breaks the trap's read path keeps it broken), but ignores one‑block noise. Encode **both** samples' flags into the incident `details` so responders can see *what was degraded* and *for how long*.
+
+Threats derived from **state change** (masterCopy swap, guard removal, balance drain) should *not* be debounced this way — those are deterministic one‑shot signals where any delay is pure cost. The debounce is specific to visibility signals.
+
 ---
 
 # 8. Gas and Complexity Considerations
@@ -764,21 +849,69 @@ For demos and testing, removing auth entirely is also acceptable — the Drosera
 
 ### Idempotent Execution
 
-A responder may receive the same incident more than once — an operator retry, a relayer re‑submission, a chain reorg. Executing the downstream pause twice is best‑case wasteful and worst‑case harmful (double‑billed fees, inconsistent state, event spam). Make `handleIncident` idempotent by deduplicating on the payload hash:
+A responder may receive the same incident more than once — an operator retry, a relayer re‑submission, a chain reorg. Executing the downstream pause twice is best‑case wasteful and worst‑case harmful (double‑billed fees, inconsistent state, event spam). Make `handleIncident` idempotent by deduplicating on the payload hash.
+
+**Ordering matters.** A naïve implementation flips the dedup flag *before* fanning out to downstream targets:
+
+```solidity
+// WRONG — bricks the incident forever if every downstream call reverts
+function handleIncident(bytes calldata rawPayload) external onlyAuthorized {
+    bytes32 incidentHash = keccak256(rawPayload);
+    if (executedIncidentHash[incidentHash]) return;
+    executedIncidentHash[incidentHash] = true;   // flipped too early!
+
+    for (...) try IEmergencyActionTarget(t).emergencyPause(rawPayload) {} catch {}
+}
+```
+
+If every approved target reverts on this first call — bug in a target, gas griefing, a target paused for unrelated reasons — the hash is now marked executed and **the operator can never retry**, even after fixing the downstream target. The incident is permanently lost.
+
+The correct pattern flips the flag **only after at least one downstream call succeeds**:
 
 ```solidity
 mapping(bytes32 => bool) public executedIncidentHash;
 
 function handleIncident(bytes calldata rawPayload) external onlyAuthorized {
+    // ... validate payload ...
     bytes32 incidentHash = keccak256(rawPayload);
-    if (executedIncidentHash[incidentHash]) return;   // already handled
-    executedIncidentHash[incidentHash] = true;
 
-    // ... execute response
+    // Replay of an already-succeeded incident: cheap no-op (idempotency).
+    if (executedIncidentHash[incidentHash]) return;
+
+    address[] memory targets = registry.getTargets();
+    uint256 attemptedCount;
+    uint256 successCount;
+
+    for (uint256 i = 0; i < targets.length; i++) {
+        address t = targets[i];
+        if (!registry.approvedTargets(t)) continue;
+        attemptedCount++;
+
+        bool success;
+        try IEmergencyActionTarget(t).emergencyPause(rawPayload) {
+            success = true; successCount++;
+        } catch { success = false; }
+        emit DownstreamPauseAttempt(t, success);
+    }
+
+    // Surface "fan-out is misconfigured" vs "fan-out couldn't contain damage"
+    // as distinct revert reasons so operators can diagnose the failure mode.
+    require(attemptedCount > 0, "no approved targets");
+    require(successCount > 0,   "no target paused");
+
+    // Only NOW is the incident truly handled.
+    executedIncidentHash[incidentHash] = true;
+    // ... bookkeeping + emit IncidentHandled ...
 }
 ```
 
-The same payload hashing to the same ID guarantees a retry is a no‑op. Note this is a dedup, not a rate‑limiter — for rate limiting use a cooldown block window.
+Three properties this gives you:
+
+1. **Idempotent on success** — replays of a successfully‑handled incident are no‑ops.
+2. **Retryable on failure** — if every downstream target reverted, the hash stays clear and the operator can retry once a target is healthy again.
+3. **Diagnosable** — `"no approved targets"` and `"no target paused"` are distinct failure modes; the former is a registry misconfiguration, the latter is downstream brokenness.
+
+Note this is a dedup, not a rate‑limiter — for rate limiting use a cooldown block window.
 
 ### Guardian Registry (Fan‑Out Pattern)
 
@@ -1008,10 +1141,11 @@ Always guard inputs carefully.
 Before mainnet activation:
 
 ### Core Contract Requirements
+- [ ] Trap has **no constructor arguments** — deployment‑time addresses live in a compile‑time config (e.g. `TrapDeployConfig.sol`) and are surfaced via `pure` accessor functions
 - [ ] `collect()` is `external view` and cannot revert
 - [ ] `collect()` returns structured `abi.encode(CollectOutput(...))` with safe defaults on failure
 - [ ] Snapshot includes `blockNumber` and the monitored target address
-- [ ] Every fallible read has an explicit `xxxReadOk` flag (no ambiguous `address(0)` sentinels)
+- [ ] Every fallible read has an explicit `xxxReadOk` flag (no ambiguous `address(0)` sentinels) — **including the BaselineFeeder read itself** (`baselineReadOk`, distinct from `baselineConfigured`)
 - [ ] Token balance reads return `(ok, bal)`; aggregate fields only sum successful reads; snapshot carries a `balancesReadOk` flag that drives `MonitoringDegraded`
 - [ ] Drain‑style relative checks are gated on the previous/oldest sample's `balancesReadOk` so a recovering RPC cannot look like a drain
 - [ ] Paginated reads track completeness (`complete` flag) and do not silently treat partial reads as empty
@@ -1022,6 +1156,7 @@ Before mainnet activation:
 - [ ] `shouldRespond()` is safe against **malformed** (non‑empty, wrong‑length, garbage) snapshot bytes — length check + manual parsing, not raw `abi.decode`
 - [ ] Both absolute (vs baseline) and relative (vs previous) integrity checks are present
 - [ ] Baseline `(masterCopy, threshold, ownerCount, ownersHash, ...)` is read from a governance‑owned feeder at `collect()` time and embedded in every snapshot; absolute checks are gated on `baselineConfigured`; baseline rotation needs no trap redeploy
+- [ ] `MonitoringDegraded` (any `xxxReadOk = false`) is **debounced across two consecutive samples** — a one‑block RPC blip must not auto‑pause; state‑change threats are *not* debounced
 - [ ] All inputs validated — empty arrays, invalid data, zero‑length bytes handled safely
 
 ### Payload & Response Alignment
@@ -1030,7 +1165,8 @@ Before mainnet activation:
 - [ ] Response contract parameters match the payload encoding
 - [ ] Response contract deployed and accessible
 - [ ] Responder auth allows the actual Drosera executor address(es)
-- [ ] Responder is idempotent (dedup on incident hash) — replaying the same incident is a no‑op
+- [ ] Responder is idempotent **on success** — replaying a handled incident is a no‑op, but the `executedIncidentHash` flag is flipped *after* at least one downstream target accepts the pause, so a total downstream failure stays retryable
+- [ ] Responder reverts with distinct messages for `"no approved targets"` (registry misconfig) vs `"no target paused"` (downstream broken), so operators can diagnose the failure mode
 - [ ] For multi‑target containment: approved targets managed via registry/allowlist, not hardcoded
 - [ ] Registry caps total targets at `MAX_TARGETS` so fan‑out gas is bounded
 - [ ] Registry uses a `_seen` insertion flag so `revoke → re‑approve` cannot duplicate a target in the array or cause duplicate downstream calls
