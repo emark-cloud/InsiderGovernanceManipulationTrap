@@ -1,205 +1,99 @@
-# FourScout — 3-Minute Demo Script
+# Proof-of-Model — Pitch Voiceover
 
-> Total runtime: ~3:00 | ~450 words at 150 wpm
+*Spoken track for the 10-slide deck. First-person, conversational. The slides carry one idea each; this script carries the detail. Approx. timings per slide — total **~5.5 min spoken**, **~6.5–7 min with the demo**. See "Trim to ~4 min" at the end.*
 
-Fine-tuned from the user's draft. Changes from the original are flagged inline with **[edit]**; the voice and structure are preserved.
-
----
-
-## Section 1 — Hook (0:00–0:15) [15s]
-
-**[Visual:** Landing page hero, or a split-screen of two Four.meme tokens — one rugging, one pumping.**]**
-
-> "Four.meme processes over 800,000 daily users and hundreds of new token launches every day — and most of them are rugs or dead on arrival. Traders lose money because they have seconds to decide whether a token is real, and no tool actually remembers what happened last time. We built **FourScout** to fix that."
-
-**[edit]** *"thousands of new token launches"* → *"hundreds of new token launches every day"* (more defensible per-day figure), added *"or dead on arrival"* (captures the dominant failure mode — abandonment, not just rug-pulls).
-
-**Why this works:** leads with the specific platform number, names the problem in one breath, ends with the project name in bold.
+**Delivery & honesty guardrails (keep these true on stage):**
+- The MVP is a deterministic toy net with a single-round, multi-sample check. LLMs and interactive bisection are roadmap — say so.
+- The money spine shipped on the **escrow rail (Arbitrum Sepolia)**; **x402 on Arbitrum One is the production intent**. Don't imply x402 is live end-to-end.
+- No invented gas number. If asked, it's ~2% parity vs Solidity — feasibility, not a headline multiplier.
+- Demo stakes and the ~30s finalize window are a demo setup, not production economics.
 
 ---
 
-## Section 2 — Why Existing Solutions Fail (0:15–0:30) [15s]
+## Slide 1 · "An agent pays for a frontier model. It gets a cheap one." *(~25s)*
 
-**[Visual:** Screen recording of scrolling through raw Four.meme launches, BscScan tabs open, Telegram alpha groups.**]**
-
-> "Today traders solve this by tab-hopping between BscScan, Telegram alpha groups, snipe bots, and their own memory. Rug checkers give you a snapshot score and forget it. Snipe bots execute without reasoning. Nobody is doing the one thing that matters: **learning from yesterday's rugs to score today's launches**."
-
-**[edit]** added *"snipe bots"* to the list of failing tools; changed *"Trading bots"* to *"Snipe bots"* (the actual competitor on Four.meme).
-
-**Why this works:** names the alternatives explicitly, then plants the seed for your #1 differentiator (memory) without revealing it yet.
+> AI agents are starting to pay each other for work — and most of that work is running models. But when a buyer agent pays for a frontier model, nothing stops the provider from quietly serving a cheap 7B, pocketing the difference, and handing back a plausible-looking answer. The whole agent economy is being built on an honor system. We built the thing that makes it honest.
 
 ---
 
-## Section 3 — Introduce the Product (0:30–0:40) [10s]
+## Slide 2 · "Paid agent inference has no proof layer." *(~30s)*
 
-**[Visual:** Cut to the FourScout dashboard, live feed populated.**]**
-
-> "FourScout is a persona-based AI trading agent for Four.meme. It scans every new launch, scores it across eight signals, explains the risk in plain language, and executes trades only within limits you control."
-
-**[edit]** *"eight on-chain signals"* → *"eight signals"* — social + market context aren't strictly on-chain, so this is more accurate.
-
-**Why this works:** one sentence, names who it's for, what it does, and the safety rail.
+> Here's the core problem: a buyer gets back an output and a bill — with no way to check either. Your only options today are to trust a reputation score, which is unprovable; re-run the model yourself, which defeats the entire point of paying someone else; or buy a full cryptographic proof that costs more than the inference did. None of those scale to millions of agent-to-agent calls. There is no proof layer.
 
 ---
 
-## Section 4 — Show the Core Workflow Live (0:40–1:25) [45s]
+## Slide 3 · "Commit the trace → spot-check a path → slash the cheat." *(~40s)*
 
-**[Visual:** Live dashboard, keep cursor movements decisive.**]**
-
-> "Here's the dashboard. Wallet's connected. Persona: Momentum. Daily cap: 0.3 BNB."
-
-**[Point to the live feed]**
-
-> "The scanner is running. Every 30 seconds it pulls new launches from Four.meme and scores them. Green, amber, red — with the main risk factor surfaced."
-
-**[Click a green-scored token]**
-
-> "This one just launched. Look at the radar — eight signals: creator history, holder concentration, bonding curve velocity, liquidity, tax flags, volume consistency, social signal, market context. Each scored independently, then weighted."
-
-**[Scroll to the AI rationale]**
-
-> "The agent recommends a buy at 0.05 BNB. I approve. Slippage-protected quote, sign in-wallet — on-chain in seconds. Position tracked with live PnL."
-
-**[edit]** *"Daily cap: 0.5 BNB"* → *"Daily cap: 0.3 BNB"* (matches our actual default and the server-side cap). Added *"slippage-protected quote"* before signing — calls out a real safety feature in one word. Dropped *"Transaction preview, sign, done"* (redundant with the single preview-and-sign flow).
-
-**Why this works:** fast-paced, hits setup → scan → score → approve → execute in under a minute, no dead air.
+> So here's what we do — and notice we don't sell compute, and we don't prove every call. Five steps, all autonomous agents, no human in the loop. The buyer pays per call. The provider runs the model and posts a tamper-proof fingerprint of the exact computation — a Merkle root over its full activation trace — on-chain. A challenger samples a random output neuron and walks the path back to the input. An on-chain Stylus verifier recomputes that one path and checks it matches. Pass, the fee is released. A lie, and the provider's stake is slashed to zero and the challenger gets paid. Commit the trace, spot-check a path, slash the cheat.
 
 ---
 
-## Section 5 — The Three Differentiators (1:25–2:25) [60s]
+## Slide 4 · "The bottleneck isn't compute — it's trust." *(~28s)*
 
-This is the heart of your pitch. Give each differentiator ~20 seconds.
+> Why now. The picks-and-shovels of the agent economy — payments, identity — are being built fast; the AI-agent market is projected to hit fifty-two billion dollars by 2030. The missing piece is verification: proof that the work you paid for is the work that happened. Every paid agent-to-agent call is an unverified transaction today. The Arbitrum Foundation itself names this a priority. x402 and ERC-8004 gave agents payments and identity — but nobody built the trust layer for *what was actually run*.
 
-### 5a — Memory Loops (1:25–1:45) [20s]
-
-**[Visual:** Switch to the rationale view on any token, highlight the historical-summary line *and* the creator-reputation card.**]**
-
-> "Here's what nobody else is shipping. Read the rationale: *'Historical: 3 of your 4 amber tokens with creator-score 3 or lower closed at over 50% loss.'* That's not a static warning. That's FourScout looking at **your** closed trades and **your** confirmed rugs, and feeding the outcome back into today's scoring."
-
-**[Click into the creator address, show the creator_reputation card]**
-
-> "This creator has launched four tokens. Two confirmed rugs. FourScout remembers. Same wallet, scanned tomorrow, gets a lower score automatically."
-
-**Note:** the exact quoted rationale string depends on what `signal_outcomes_summary()` actually emits with your seed data — rehearse with the live copy a day before recording so the numbers match what judges see on screen. Seed instructions in `DEMO_PREP.md` §6.
-
-### 5b — ERC-8004 On-Chain Identity (1:45–2:05) [20s]
-
-**[Visual:** Settings page → ERC-8004 registration card → cut to BscScan tab showing the registration tx.**]**
-
-> "Second: FourScout isn't just an app calling an API. It registers on-chain as an ERC-8004 agent via Four.meme's AgentIdentifier contract. Here's the transaction on BscScan."
-
-**[Brief pause on the tx]**
-
-> "This is Four.meme's own agent-identity standard. When **AI Agent Mode** launches trigger, only registered agent wallets can participate. FourScout is first-class on the platform — not a scraper."
-
-**[edit]** *"When insider phase launches"* → *"When AI Agent Mode launches trigger"* (Four.meme's actual terminology — matches the spec and avoids ambiguity).
-
-### 5c — Escalation Pipeline (2:05–2:25) [20s]
-
-**[Visual:** OpportunityDetail for an AMBER token, show the deep-analysis narrative with cross-signal correlation.**]**
-
-> "Third: most AI trading tools let the LLM make every decision. That's slow, expensive, and often wrong when deterministic rules work better. FourScout scores **every** token with deterministic math — fast, cheap, auditable. The AI pushes hardest where judgment actually adds value: AMBER escalation."
-
-**[Highlight the multi-signal narrative]**
-
-> "Look at this narrative — the model correlates creator cycling with bonding-curve velocity with holder concentration. Pattern detection across signals, not eight disconnected one-liners."
-
-**[edit]** *"AI only kicks in for amber tokens"* → *"The AI pushes hardest … AMBER escalation"* (the original was factually loose — LLM narrative synthesis actually runs for all scored tokens; the AMBER-specific path is the `deep_analyze_amber()` escalation, which is what you're showing. The revised wording is accurate without losing the beat).
-
-**Why this works:** each differentiator has a concrete on-screen artifact. Memory → rationale text + creator record. Identity → BscScan tx. Escalation → correlated narrative. Judges see proof, not claims.
+*Source on slide: MarketsandMarkets. If pushed, it's a projection, not revenue — own that.*
 
 ---
 
-## Section 6 — Prove Trust and Reliability (2:25–2:45) [20s]
+## Slide 5 · "Three agents, four contracts, one Stylus verifier." *(~38s)*
 
-**[Visual:** "What I Avoided" page with the stats banner, then flash to Activity feed.**]**
+> Here's the whole system. Off-chain, three autonomous agents — a buyer that pays, a provider that serves, a challenger that audits. On-chain, four contracts on Arbitrum: escrow holds the payment, the registry holds identity and stake, the challenge manager runs the optimistic game. The star is the verifier — a Rust contract compiled to WASM through Stylus, doing the Merkle-proof checks and the fixed-point recompute the EVM can't do cheaply. And the human only ever watches a read-only dashboard — no person can send a protocol transaction, which is what keeps this a real agent-to-agent system. It's deployed live on Arbitrum Sepolia.
 
-> "Quick proof this is real. The 'What I Avoided' page tracks every red-scored token the agent flagged, at 1, 6, and 24 hours. **773 tokens flagged this week. Twelve confirmed rugs. Roughly 0.4 BNB in estimated losses avoided.**"
-
-**[Cut to Activity feed]**
-
-> "Full audit trail. Every scan, every proposal, every trade, every override — logged with outcomes."
-
-**[edit]** added the specific live number (*773 flagged*) — it's real and recorded on your production stats endpoint. Concrete numbers beat round ones. The *12 rugs / 0.4 BNB savings* line depends on seed data landing — verify against the live stats endpoint 10 min before recording.
-
-**Why this works:** the "What I Avoided" log is visceral, quantified, undeniable. Activity feed proves it's not a theater demo.
+*Delivery: point at the amber verifier card — that's the deep-engineering core.*
 
 ---
 
-## Section 7 — Operator / Enterprise Side (2:45–2:55) [10s]
+## Slide 6 · "A random path — not a random neuron — makes the check sound." *(~40s)*
 
-**[Visual:** Split — left half shows Settings with budget caps + approval modes; right half briefly shows `FourScout.md` §18 heading.**]**
-
-> "Two audiences benefit. **Traders** stay in control — hard budget caps, four approval modes, monitor-only switch whenever they want out. **The Four.meme ecosystem** gets a trust layer: our non-custodial session-key roadmap means we can scale this to agent-per-user without ever taking custody of a single private key."
-
-**[edit]** the original draft restated trader safety (which §3 already covered) without answering the template's actual question: *"who benefits and why would they pay?"* Revised to hit both audiences — the trader as end-user, and Four.meme itself as the ecosystem that benefits from a retention/trust layer. One breath, no filler.
-
-**Why this works:** pre-empts the *"who's the customer?"* question and signals that you've thought past the MVP.
+> Now the subtle part — why the spot-check is actually sound. You anchor at a random *output* neuron and trace back to the immutable *input* layer. To pass while serving a cheaper model, a provider would have to fake a trace consistent with the real weights along *every* sampled path — which means actually running the real model. Checking a single isolated neuron instead passes vacuously, even when the output is wrong — and the paper we follow explicitly rejects that strawman. One path catches a one-node cheat with probability about one over the layer width; multi-sampling drives that toward certainty. This is the accepted protocol from Anchuri et al. at SaTML 2026 — not the strawman.
 
 ---
 
-## Section 8 — Scale and Vision (2:55–3:00) [5s]
+## ▶ DEMO — roll the recorded demo here *(~60–90s)*
 
-**[Visual:** Back to dashboard, agent status: scanning. Camera pulls back slightly.**]**
+*Lead-in line, then cut to video:*
 
-> "FourScout turns memecoin trading from a reaction game into an informed one. Autonomous AI agents with memory, on-chain identity, and revocable authority. **This is what agentic Web3 actually looks like.**"
+> Let me show you it running.
 
-**[edit]** added *"on-chain identity, and revocable authority"* — threads the ERC-8004 beat from §5b and the session-key roadmap from §7 into a single closing phrase. Keeps the hackathon-theme tie-in ("agentic Web3") that was already strong.
+*Recorded demo beats: two providers advertise the **same** model hash. Provider A runs it honestly — PASS, keeps the fee. Provider B cheats on command — the challenger catches the mismatch on a single sampled node, stake goes to zero on-chain, the bounty is paid. Then one command, `pnpm verify`, reads the chain, decodes the Slashed / BountyPaid events, and prints PASS. None of it is staged.*
 
-**Why this works:** one-breath closer, ties back to the hackathon's core theme, ends with specificity (three concrete properties) rather than generic hype.
-
----
-
-## Timing budget
-
-| Section | Target | Running total |
-|---|---|---|
-| 1. Hook | 0:15 | 0:15 |
-| 2. Why existing fail | 0:15 | 0:30 |
-| 3. What it is | 0:10 | 0:40 |
-| 4. Live workflow | 0:45 | 1:25 |
-| 5a. Memory loops | 0:20 | 1:45 |
-| 5b. ERC-8004 | 0:20 | 2:05 |
-| 5c. Escalation | 0:20 | 2:25 |
-| 6. Trust/reliability | 0:20 | 2:45 |
-| 7. Operator view | 0:10 | 2:55 |
-| 8. Vision | 0:05 | 3:00 |
-
-If you run long, cut §7 to *"Traders stay in control — hard caps, monitor-only switch, session-key roadmap for no-custody scaling"* (saves 3s).
+*Re-enter live on Slide 7. (Placement is flexible — this can also slot immediately before the close if you want the demo to be the climax.)*
 
 ---
 
-## Numbers to verify 10 minutes before recording
+## Slide 7 · "We didn't invent a trust model — we borrowed Arbitrum's." *(~35s)*
 
-These appear in the narration — confirm each matches the live UI before hitting record.
-
-| Line | Source | How to verify |
-|---|---|---|
-| "800,000 daily users" | Public Four.meme metric | Confirm on four.meme or their announcement channel — swap if stale |
-| "773 tokens flagged" | `/api/avoided/stats` → `total_flagged` | `curl -H "X-API-Key: $API_KEY" $BASE/api/avoided/stats` |
-| "12 confirmed rugs" | `/api/avoided/stats` → `confirmed_rugs` | Same endpoint. If <3, re-seed per `DEMO_PREP.md` §6 |
-| "~0.4 BNB saved" | `/api/avoided/stats` → `estimated_savings_bnb` | Same endpoint |
-| "3 of your 4 amber tokens…" rationale quote | Live rationale text on your demo token | Open OpportunityDetail for the demo AMBER — read the actual line verbatim |
-| Creator "4 tokens, 2 rugs" | `creator_reputation` row | `SELECT * FROM creator_reputation` via `railway shell` |
+> And here's the takeaway for this room: we didn't invent a new trust model. The optimistic fraud-proof game that secures the Arbitrum rollup — post a root, open a challenge window, re-execute one step to catch a lie, slash the cheat — is exactly the game we run for inference. A provider commits a trace root instead of a state root; a Stylus verifier recomputes one path instead of re-executing one step; the challenge window and the slashing are identical. We're applying Arbitrum's own security model to the one thing Arbitrum doesn't yet secure — what model actually ran.
 
 ---
 
-## Delivery craft notes
+## Slide 8 · "Four revenue surfaces." *(~28s)*
 
-- **Say the numbers.** Specific beats vague — *"773"* lands harder than *"hundreds."*
-- **Don't narrate clicks.** Judges see the cursor. Your voice adds meaning, not transcription.
-- **Pause on the Override Summary card and the creator_reputation row.** These are the *"memory"* proof points. Let them register.
-- **End on the dashboard, not the logo.** You want the final frame to be the product running, not a title card.
+> The economics are self-policing. Providers stake a slashable bond to play. Buyers pay per call — x402 in production, the escrow rail in our MVP. Challengers earn a cut of slashed stake, so auditing pays for itself. And we take a small protocol fee on every verified call — that's our surface. The more agent inference flows through the rail, the more the rail earns, without us ever touching the model or the compute.
 
 ---
 
-## Pre-record checklist
+## Slide 9 · "Not zkML. Not a compute marketplace. The trust rail." *(~28s)*
 
-- [ ] All four Phase 3.5 surfaces seeded (`DEMO_PREP.md` §9 verification queries pass)
-- [ ] Wallet connected on `four-scout.vercel.app` with ≥0.002 BNB so the approve click doesn't fail on gas
-- [ ] One GREEN pending action ready for the §4 approve beat (or AMBER if that's what's flowing)
-- [ ] Demo token for §5a has a visible `signal_outcomes` historical summary in its rationale
-- [ ] `/api/avoided/stats` returns the numbers you're about to speak
-- [ ] BscScan tab pre-loaded on the ERC-8004 registration tx
-- [ ] Browser zoom at 110%, cursor highlight on, 1080p / 30fps recording
-- [ ] Run through once silently to land the 3:00 timing
+> People will try to file us under zkML or decentralized compute. We're neither. We don't zk-prove or re-execute the whole model — that's too slow and too expensive per call. And we don't sell the inference — the compute provider is the party you can't trust. We sit *above* whoever's selling the compute and make cheating catchable and expensive. We're the trust rail.
+
+---
+
+## Slide 10 · "The primitive is proven — and it's running." *(~35s)*
+
+> To close: the verification primitive and the economic game are proven, end-to-end and on-chain. The toy model isn't a weakness — exact-equality recompute *requires* determinism, and the product is the mechanism, not the model size. The roadmap scales the same paradigm to real LLMs with tolerance bands and to multi-round bisection. The full Stylus verifier and contract stack are live on Arbitrum Sepolia right now — and you can verify every bit of it with one command. Thank you.
+
+*Optional verbal ask (the slide has none): end with one sentence — "If you're building agent payments, come talk to us about piloting the rail," or your judges'-vote line.*
+
+---
+
+## Trim to ~4 minutes
+
+If you're on a tight clock, the spoken track compresses cleanly:
+- **Slide 3** — drop the per-step walk; say "the provider commits a fingerprint of the computation, a challenger spot-checks one random path, and a Stylus verifier slashes any mismatch."
+- **Slide 4** — keep the $52B line and the "unverified transaction" line; cut the rest.
+- **Slides 8 + 9** — halve each to two sentences.
+- **Slide 6** — keep the "every sampled path = actually run the model" point; drop the ~1/N detail unless a technical judge asks.
+
+That lands ~3.5–4 min of speaking plus the demo.
