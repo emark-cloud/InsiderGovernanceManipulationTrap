@@ -471,9 +471,12 @@ function _decodeSnapshot(bytes calldata raw) internal pure returns (Snapshot mem
     if (raw.length != ENCODED_SNAPSHOT_LEN) return s;     // graceful zero snapshot
     assembly {
         let p := raw.offset
-        mstore(add(s, 0x00), calldataload(add(p, 0x00)))  // field 0
-        mstore(add(s, 0x20), calldataload(add(p, 0x20)))  // field 1
-        // ... one calldataload per field
+        // Address fields: mask to 160 bits so dirty high-order bytes in
+        // malformed calldata can't poison later address-equality checks.
+        mstore(add(s, 0x00),
+            and(calldataload(add(p, 0x00)), 0xffffffffffffffffffffffffffffffffffffffff)) // field 0 (address)
+        mstore(add(s, 0x20), calldataload(add(p, 0x20)))  // field 1 (uint256)
+        // ... one calldataload per field; mask every address field the same way
     }
 }
 ```
@@ -481,6 +484,24 @@ function _decodeSnapshot(bytes calldata raw) internal pure returns (Snapshot mem
 Permissive bool decode (`word != 0`) keeps the parser total — no input of the expected length can ever revert. Combine with the empty‑bytes guard above and an "empty previous sample is benign" policy (return `(false, "")` and skip relative checks) so a single bad sample cannot take down the consensus round.
 
 This also applies to any nested decoding in `details` payloads — wrap them in helper functions that return safe defaults rather than letting `abi.decode` propagate.
+
+**Total arithmetic, not just total decoding.** A snapshot that is the *right length* but carries adversarial or accumulated values can still revert `shouldRespond()` through checked math — `sumW += s.blockWithdrawalSum` overflowing across a window, or `drop * BPS` overflowing before a division. Use saturating accumulation and overflow‑guarded division so no correctly‑sized input can throw:
+
+```solidity
+function _satAdd(uint256 a, uint256 b) internal pure returns (uint256 c) {
+    unchecked { c = a + b; if (c < a) c = type(uint256).max; }  // cap, don't revert
+}
+
+// dropBps where the caller guarantees drop < total (ratio < BPS):
+function _dropBps(uint256 drop, uint256 total) internal pure returns (uint256) {
+    unchecked {
+        if (drop <= type(uint256).max / BPS) return (drop * BPS) / total; // exact fast path
+        return drop / (total / BPS);   // malformed-only slow path: total > drop > max/BPS, never /0
+    }
+}
+```
+
+The "never revert" rule is not satisfied by a total *decoder* alone — every arithmetic path reachable from malformed‑but‑sized bytes must also be total.
 
 ### Strict Sample Ordering Validation
 
@@ -625,6 +646,23 @@ Rotation happens on‑chain via `feeder.setBaseline(target, mc, thr, oc, ownersH
 
 Do **not** read the baseline on‑chain at deployment from the target itself — an attacker who controls state at deploy time would pin the baseline to the compromised value. The feeder's write path must be governance‑controlled, independent of the monitored target.
 
+**Surviving a one‑block feeder outage.** Because absolute checks are gated on `baselineConfigured`, a feeder *read failure* in a single block (`baselineReadOk == false`, which zeroes the embedded policy) drops `baselineConfigured` to false for that block — and `MonitoringDegraded` is debounced, so it has not fired yet. An attacker who can knock out the feeder read for exactly the attack block thus evades same‑block absolute detection. Make the absolute vectors resilient by borrowing the **previous** sample's thresholds when the *current* read failed — and only then:
+
+```solidity
+function _policyFor(Snapshot memory current, Snapshot memory previous)
+    internal pure returns (Snapshot memory)
+{
+    if (current.baselineConfigured) return current;
+    // Fall back ONLY on a genuine read failure, never on a deliberate no-policy:
+    if (!current.baselineReadOk && previous.baselineConfigured) return previous;
+    return current; // governance simply hasn't opted in → nothing to borrow
+}
+```
+
+The distinction is load‑bearing: borrow on `!baselineReadOk` (a transient outage or tampering), but **not** when the read succeeded and the policy is simply unset (`baselineReadOk && !configured`) — there is genuinely nothing to inherit, and borrowing there would silently re‑enable absolute checks a deliberate no‑policy state turned off.
+
+**Enforce the invariants your trap math relies on at the feeder, not in a comment.** If `shouldRespond` divides by or scales with a feeder value (a price ratio, a denominator), `require` it nonzero in `setBaseline`/`setPolicy`; a NatSpec "must be > 0" the setter doesn't enforce is a latent footgun. Likewise, if the policy struct carries a self‑binding field (the target it applies to), verify it in `collect()` — `baselineConfigured = ok && p.configured && p.target == TARGET` — so a misconfigured or malicious feeder can't hand the trap a foreign‑target policy.
+
 ### Structured Incident Payloads
 
 Loose `abi.encode(uint8 threatType, bytes details)` works but is not self‑describing — the responder has to know the positional shape out‑of‑band, and `details` varies per threat type. For production traps, define a named struct and encode that:
@@ -656,10 +694,21 @@ function handleIncident(bytes calldata rawPayload) external;
 Benefits:
 - Self‑describing — one named field per piece of context
 - Stable ABI — add fields at the end without breaking existing decoders
-- Easy idempotency — `keccak256(rawPayload)` is a natural incident ID
+- Easy idempotency — dedupe on a *canonical* incident key built from the decoded fields (see §9), not the raw bytes
 - Cleaner logs — responder emits each field as an indexed event arg
 
 Keep `details` as `bytes` for threat‑specific extras rather than bloating the base struct.
+
+**Decoding the payload in the responder — mind the tuple‑offset word.** Responders often peek the leading fields of the `IncidentPayload` (for event metadata or the canonical dedup key). Because the struct has a trailing dynamic `bytes details`, `abi.encode(payload)` encodes a *dynamic tuple* and prepends a 32‑byte offset word — the first word is `0x20`, **not** `threatType`. A manual assembly decoder must skip it:
+
+```solidity
+// layout of abi.encode(IncidentPayload):
+//   [0x00] offset to tuple (== 0x20)   <-- skip this word
+//   [0x20] threatType  [0x40] target  [0x60] currentBN  [0x80] previousBN  ...
+threatType := calldataload(add(raw.offset, 0x20)) // NOT add(raw.offset, 0x00)
+```
+
+Get this wrong and you read `threatType = 32` and shift every field by one word — and it stays invisible until something *consumes* the decoded fields (an event no one asserts on, or a dedup key). Always test a manual decoder against the real `abi.encode` output (assert the round‑trip), never against a hand‑built buffer.
 
 ### Multi‑Vector Detection
 
@@ -913,6 +962,16 @@ Three properties this gives you:
 
 Note this is a dedup, not a rate‑limiter — for rate limiting use a cooldown block window.
 
+**Choosing the dedup key.** `keccak256(rawPayload)` is the simplest key but dedupes on the *exact bytes* — the same logical incident re‑submitted with cosmetically different `details` (a reordered extra, a recomputed diagnostic) hashes differently and executes again. Prefer a key over the canonical identity fields:
+
+```solidity
+bytes32 incidentHash = keccak256(abi.encode(threatType, target, currentBN, previousBN));
+```
+
+This collapses re‑submissions of one incident while keeping genuinely distinct incidents (different threat type or block pair) separate. Two caveats: decode those fields *safely* (see the tuple‑offset note in §5 — a buggy decoder silently collapses every incident to one key), and make downstream targets idempotent too (pausing an already‑paused contract should be a no‑op).
+
+**Failed‑attempt events do not survive a revert.** The loop emits `DownstreamPauseAttempt` per target, but on *total* failure the `require(successCount > 0)` reverts and the EVM discards every event from this call — only the revert reason persists, so per‑target detail needs a trace. Don't let NatSpec imply those events are queryable after a reverted dispatch; they *do* persist on any dispatch where at least one target succeeds.
+
 ### Guardian Registry (Fan‑Out Pattern)
 
 A responder hardcoded to one downstream target is a single point of failure and a deployment‑time commitment. Production responders should **fan out to a bounded allowlist of approved emergency targets** managed by an owner/governance address:
@@ -929,6 +988,7 @@ contract SafeGuardianRegistry {
     function setTarget(address target, bool approved) external onlyOwner {
         require(target != address(0), "zero target");
         if (!_seen[target]) {
+            require(approved, "not seen");            // never burn a slot on a revoke
             require(targets.length < MAX_TARGETS, "max targets");
             _seen[target] = true;
             targets.push(target);                     // push at most once
@@ -954,9 +1014,10 @@ for (uint256 i = 0; i < targets.length; i++) {
 }
 ```
 
-Two subtleties worth calling out:
+Three subtleties worth calling out:
 
 - **Duplicate protection.** A naïve `if (approved && !approvedTargets[target]) targets.push(target)` re‑pushes a target after a `revoke → re‑approve` cycle, producing a duplicate in `targets[]` and therefore duplicate downstream calls when the responder fans out. Track insertion separately with a `_seen` flag, as shown above. `approvedTargets` stays the live flag gating fan‑out; `targets[]` is append‑only for stable off‑chain indexing.
+- **Don't burn a slot on a revoke.** Because the append is gated only on `!_seen`, a naïve version also appends when `approved == false` — so an owner typo like `setTarget(wrongAddr, false)` permanently consumes one of the `MAX_TARGETS` slots with a never‑approved entry, and a few accidental revokes can fill `targets[]` with dead addresses. Gate the first‑insert path on `approved` (`require(approved, "not seen")`), as shown above, or implement removable storage with swap‑and‑pop.
 - **Bounded fan‑out.** The responder iterates `targets[]` inside a single on‑chain call. Without an explicit cap (`MAX_TARGETS`), a registry that has been appended to many times becomes gas‑fragile at the exact moment you need it most — an incident. If you expect more than ~16 distinct targets, shard responders by domain (core, treasury, bridges, ...) rather than growing one unbounded list.
 
 This gives governance the ability to add, rotate, or remove emergency hooks without redeploying the responder — and isolates a single misbehaving target so it cannot prevent the others from being paused.
@@ -1156,6 +1217,8 @@ Before mainnet activation:
 - [ ] `shouldRespond()` is safe against **malformed** (non‑empty, wrong‑length, garbage) snapshot bytes — length check + manual parsing, not raw `abi.decode`
 - [ ] Both absolute (vs baseline) and relative (vs previous) integrity checks are present
 - [ ] Baseline `(masterCopy, threshold, ownerCount, ownersHash, ...)` is read from a governance‑owned feeder at `collect()` time and embedded in every snapshot; absolute checks are gated on `baselineConfigured`; baseline rotation needs no trap redeploy
+- [ ] `baselineConfigured` also verifies the policy's self‑binding field (`p.target == TARGET`); invariants the trap math relies on (e.g. nonzero price ratio) are `require`d in the feeder setter, not just in NatSpec
+- [ ] Absolute checks survive a single‑block feeder *read* failure by borrowing the previous healthy sample's policy (only on `!baselineReadOk`, never on a deliberate unconfigured state)
 - [ ] `MonitoringDegraded` (any `xxxReadOk = false`) is **debounced across two consecutive samples** — a one‑block RPC blip must not auto‑pause; state‑change threats are *not* debounced
 - [ ] All inputs validated — empty arrays, invalid data, zero‑length bytes handled safely
 
@@ -1166,15 +1229,17 @@ Before mainnet activation:
 - [ ] Response contract deployed and accessible
 - [ ] Responder auth allows the actual Drosera executor address(es)
 - [ ] Responder is idempotent **on success** — replaying a handled incident is a no‑op, but the `executedIncidentHash` flag is flipped *after* at least one downstream target accepts the pause, so a total downstream failure stays retryable
+- [ ] Responder dedupes on a **canonical** incident key (`keccak256(threatType, target, currentBN, previousBN)`), not raw payload bytes; the field decoder skips the leading abi tuple‑offset word and is round‑trip tested against `abi.encode`
 - [ ] Responder reverts with distinct messages for `"no approved targets"` (registry misconfig) vs `"no target paused"` (downstream broken), so operators can diagnose the failure mode
 - [ ] For multi‑target containment: approved targets managed via registry/allowlist, not hardcoded
 - [ ] Registry caps total targets at `MAX_TARGETS` so fan‑out gas is bounded
 - [ ] Registry uses a `_seen` insertion flag so `revoke → re‑approve` cannot duplicate a target in the array or cause duplicate downstream calls
+- [ ] Registry rejects `setTarget(unseen, false)` (revoking a never‑approved address) so an owner typo cannot permanently consume a `MAX_TARGETS` slot
 - [ ] Privileged roles (feeder owner, registry owner, responder admin) are deployed behind a governance multisig + timelock, not EOAs — code is governance‑*compatible*, deployment makes it governance‑*managed*
 
 ### Determinism & Safety
 - [ ] No randomness, no off‑chain assumptions, no `msg.sender` dependencies
-- [ ] Division by zero impossible or safely handled
+- [ ] Division by zero **and arithmetic overflow** impossible or saturated — `shouldRespond` accumulations and divisions cannot revert on malformed‑but‑correctly‑sized bytes (saturating add, guarded `mulDiv`)
 - [ ] External reads wrapped in try/catch with safe defaults
 - [ ] No storage writes, events, or state‑changing calls in trap
 
@@ -1189,6 +1254,7 @@ Before mainnet activation:
 - [ ] Sample ordering tests pass
 - [ ] Boundary threshold tests pass
 - [ ] Exploit reproduction test passes (historical fork)
+- [ ] Every degraded/unconfigured‑mode guarantee the README makes ("what still fires without governance config / during a single‑block feeder outage") has a passing test that exercises exactly that state
 
 ### Documentation
 - [ ] Threat model documented (what is monitored, what attack it catches)
